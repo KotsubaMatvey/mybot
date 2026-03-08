@@ -1,105 +1,68 @@
-# ICT Crypto Alerts Bot
+# Trillion Strategy Alert Bot
 
-Telegram бот для детекции ICT паттернов на крипторынке.
+ICT pattern scanner + classic TA channel alerts for Telegram.
 
-## Паттерны
-- **FVG** — Fair Value Gap (бычий и медвежий)
-- **OB** — Order Block (бычий и медвежий)
-- **BOS** — Break of Structure (бычий и медвежий)
-- **SWEEP** — Liquidity Sweep (бычий и медвежий)
+## Architecture
 
-## Монеты
-BTC, ETH, SOL (Binance Futures)
-
-## Таймфреймы
-5m, 15m, 30m, 1h, 4h, 1d
-
----
-
-## Установка
-
-### Шаг 1 — Python
-Убедись что установлен Python 3.10+:
 ```
-python3 --version
+bot.py              — main bot, commands, onboarding, scanner loop
+scanner.py          — ICT pattern detection (FVG, OB, BOS, CHoCH, Swings, Sweeps)
+classic_scanner.py  — classic TA channel alerts (RSI, orderbook, candle patterns)
+interpret.py        — market interpretation module
+database.py         — SQLite user storage, subscriptions
+payments.py         — CryptoBot payment integration
+config.py           — configuration via environment variables
 ```
 
-### Шаг 2 — Зависимости
+## Setup
+
+1. Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
 ```
+
+2. Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Шаг 3 — Создай бота в Telegram
-1. Открой @BotFather в Telegram
-2. Отправь `/newbot`
-3. Следуй инструкциям, получи токен вида `123456:ABC-DEF...`
+3. Run:
 
-### Шаг 4 — Вставь токен
-Открой `config.py` и замени:
-```python
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-```
-на твой реальный токен.
-
-### Шаг 5 — Запуск
-```
+```bash
 python bot.py
 ```
 
----
+## Environment Variables
 
-## Команды бота
-| Команда | Описание |
-|---------|----------|
-| /start | Запустить бота, подписаться на алерты |
-| /status | Посмотреть текущую подписку |
-| /settings | Настроить монеты, таймфреймы, паттерны |
-| /stop | Приостановить алерты |
-| /resume | Возобновить алерты |
+| Variable | Description |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
+| `CRYPTOBOT_TOKEN` | Token from @CryptoBot (for payments) |
+| `OWNER_IDS` | Comma-separated Telegram user IDs with lifetime access |
+| `CHANNEL_ID` | Telegram channel ID for classic TA alerts |
 
----
+## Channel Alerts (Trillion Strategy)
 
-## Деплой на сервер (чтобы бот работал 24/7)
+Posts automatically on candle close for BTCUSDT and ETHUSDT:
 
-### Вариант 1 — VPS (рекомендуется)
-Любой VPS за $5/мес (DigitalOcean, Hetzner, Linode):
-```bash
-# На сервере:
-git clone / скопируй файлы
-pip install -r requirements.txt
-# Запуск в фоне:
-nohup python bot.py &
-# Или через systemd / screen / tmux
-```
+- **RSI alerts** — overbought/oversold grouped by symbol
+- **Pattern alerts** — Pinbar/Predict with orderbook analysis
+- **Setup alerts** — Scalp/Trend Long/Short with entry, SL, TP
+- **Bounce alerts** — possible bounce/pullback signals
+- **CME close** — weekly BTC CME futures close price
 
-### Вариант 2 — Railway.app
-Бесплатный хостинг для Python-ботов.
-1. Зарегистрируйся на railway.app
-2. Создай новый проект → Deploy from GitHub
-3. Добавь переменную окружения `TELEGRAM_BOT_TOKEN`
+## Bot Features
 
----
+- ICT pattern detection: FVG, IFVG, OB, BOS, CHoCH, Swings, Sweeps, Volume, PD zones
+- Signal quality rating ★☆☆☆☆ — ★★★★★
+- Per-user symbol, timeframe and pattern preferences
+- Monthly subscription via CryptoBot (crypto payments)
+- Owner lifetime access
 
-## Структура проекта
-```
-ict_bot/
-├── bot.py          # Telegram бот, команды, подписки
-├── scanner.py      # Детекция паттернов, Binance API
-├── config.py       # Токен, символы, таймфреймы
-├── requirements.txt
-└── README.md
-```
+## Security
 
----
-
-## Как работает детекция
-
-**FVG**: Имбаланс между свечой N-2 и N — gap между high/low.
-
-**Order Block**: Последняя разворотная свеча перед сильным импульсом (тело > 1.5x среднего).
-
-**BOS**: Цена закрытия пробивает максимум/минимум последних 20 свечей.
-
-**Liquidity Sweep**: Фитиль пробивает swing high/low, но свеча закрывается обратно внутри диапазона.
-
-Бот сканирует рынок каждые 60 секунд и отправляет уведомления только при новых сигналах (дедупликация по цене и типу).
+- All secrets stored in `.env` file
+- `.env` is excluded from git via `.gitignore`
+- Never commit real tokens to the repository

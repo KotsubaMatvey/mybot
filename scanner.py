@@ -367,7 +367,7 @@ def get_active_zones():
     return dict(_active_zones)
 
 
-async def run_scanner() -> tuple[list, list]:
+async def run_scanner() -> tuple[list, list, dict]:
     """Returns (alerts, confluence_messages)"""
     all_alerts = []
 

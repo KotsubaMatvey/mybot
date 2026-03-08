@@ -1,32 +1,35 @@
-# ── Telegram ──────────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = "8607845510:AAGNmDeOHpxdSugEPnKEjhFSeemFGhJWUi8"
+import os
+from dotenv import load_dotenv
 
-# ── Binance Futures symbols ───────────────────────────────────────────────────
+load_dotenv()
+
+# ── Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# ── Binance Futures symbols
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
-# ── Timeframes ────────────────────────────────────────────────────────────────
+# ── Timeframes
 TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"]
 
-# ── Candles to fetch ──────────────────────────────────────────────────────────
+# ── Candles to fetch
 CANDLE_LIMIT = 100
 
-# ── Scanner interval (seconds) ────────────────────────────────────────────────
+# ── Scanner interval (seconds)
 SCAN_INTERVAL = 60
 
-# ── Digest interval (seconds) — 1 hour ────────────────────────────────────────
+# ── Digest interval (seconds) — 1 hour
 DIGEST_INTERVAL = 3600
 
-# ── CryptoBot ─────────────────────────────────────────────────────────────────
-CRYPTOBOT_TOKEN = "543805:AA4Kvf8WFbjFwlRLe0EFL3ACjQpTg9dW76C"
+# ── CryptoBot
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "")
 
-# ── Owner user IDs (permanent free access) ────────────────────────────────────
-# Add your Telegram user_id here
-OWNER_IDS = [977317913]  # e.g. [123456789]
+# ── Owner user IDs (permanent free access)
+_owner_raw = os.getenv("OWNER_IDS", "")
+OWNER_IDS = [int(x.strip()) for x in _owner_raw.split(",") if x.strip().isdigit()]
 
-# ── Payment check interval (seconds) ─────────────────────────────────────────
+# ── Payment check interval (seconds)
 PAYMENT_CHECK_INTERVAL = 30
 
-# ── Insights channel (leave empty string if not set up yet)
-CHANNEL_ID = "-1003846009974"  # e.g. "-1001234567890"
-
-
+# ── Insights channel
+CHANNEL_ID = os.getenv("CHANNEL_ID", "")

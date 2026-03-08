@@ -16,7 +16,7 @@ SUBSCRIPTION_DAYS  = 30
 ACCEPTED_ASSETS = ["USDT", "TON", "BTC", "ETH", "LTC", "BNB", "TRX", "USDC"]
 
 # Set this in config.py
-CRYPTOBOT_TOKEN = ""
+from config import CRYPTOBOT_TOKEN
 
 
 async def create_invoice(user_id: int) -> dict | None:
