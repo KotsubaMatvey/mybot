@@ -335,15 +335,32 @@ def check_confluence(symbol: str, results_by_tf: dict) -> list:
 
 
 # ── Deduplication ─────────────────────────────────────────────────────────────
-_sent: set = set()
+# Key: (symbol, tf, pattern_type, direction, price_level_rounded, candle_timestamp)
+# This prevents re-alerting the same structural signal until price moves significantly
+_sent: dict = {}
 
-def is_dup(symbol, tf, ptype, detail):
-    key = f"{symbol}_{tf}_{ptype}_{detail[:50]}"
+def _price_bucket(price: float) -> int:
+    """Round price to 0.5% bucket to group nearby levels."""
+    if price <= 0:
+        return 0
+    bucket_size = price * 0.005
+    return int(price / bucket_size)
+
+def is_dup(symbol: str, tf: str, ptype: str, pattern: dict) -> bool:
+    direction = pattern.get("direction", "")
+    # Use candle timestamp if available, else price bucket
+    ts    = pattern.get("time", 0)
+    level = pattern.get("gap_low") or pattern.get("level") or pattern.get("ob_low", 0)
+    pbkt  = _price_bucket(level)
+    key   = (symbol, tf, ptype, direction, pbkt, ts)
     if key in _sent:
         return True
-    _sent.add(key)
-    if len(_sent) > 30000:
-        _sent.clear()
+    _sent[key] = True
+    # Cleanup: keep only last 5000 keys
+    if len(_sent) > 5000:
+        oldest = list(_sent.keys())[:500]
+        for k in oldest:
+            del _sent[k]
     return False
 
 
@@ -367,12 +384,21 @@ def get_active_zones():
     return dict(_active_zones)
 
 
+# Semaphore: max 5 concurrent Binance API requests
+_sem = asyncio.Semaphore(5)
+
+async def _fetch_with_sem(session, symbol, tf):
+    async with _sem:
+        return await fetch_candles(session, symbol, tf)
+
+
 async def run_scanner() -> tuple[list, list, dict]:
-    """Returns (alerts, confluence_messages)"""
+    """Returns (alerts, confluence_messages, all_candles)"""
     all_alerts = []
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_candles(session, sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
+    connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tasks  = [_fetch_with_sem(session, sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
         combos = [(sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -396,7 +422,7 @@ async def run_scanner() -> tuple[list, list, dict]:
             for p in detected:
                 tf_patterns.append(p)
                 detected_map[pname] = p["detail"]
-                if not is_dup(symbol, tf, pname, p["detail"]):
+                if not is_dup(symbol, tf, pname, p):
                     all_alerts.append({
                         "symbol": symbol,
                         "timeframe": tf,
