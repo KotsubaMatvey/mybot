@@ -469,55 +469,163 @@ async def run_scanner() -> tuple[list, list, dict]:
     return all_alerts, all_confluences, all_candles
 
 
-# ── Signal Scoring ────────────────────────────────────────────────────────────
-def score_signal(symbol: str, timeframe: str, patterns: dict, detection_cache: dict) -> int:
+# ══════════════════════════════════════════════════════════════════════════════
+#  SIGNAL SCORING — weighted confidence model
+# ══════════════════════════════════════════════════════════════════════════════
+#
+#  Design principles:
+#  1. Patterns are NOT equal — CHoCH/BOS carry more information than Swings
+#  2. Confluence is directional — mixed bullish+bearish signals reduce confidence
+#  3. Higher TF bias multiplies confidence, not just adds a flat bonus
+#  4. Volume is a filter, not a signal on its own
+#  5. Result is normalized 1-5 for display
+#
+# ── Pattern weights (how much raw confidence each pattern contributes)
+_PATTERN_WEIGHTS: dict[str, float] = {
+    "CHoCH":  1.0,   # Highest — structural shift, hardest to fake
+    "BOS":    0.9,   # Strong structural confirmation
+    "IFVG":   0.8,   # Filled gap acting as S/R — reliable
+    "OB":     0.7,   # Demand/supply zone
+    "FVG":    0.6,   # Unfilled gap — good but common
+    "Sweeps": 0.6,   # Liquidity sweep — directional
+    "Volume": 0.4,   # Amplifier, not a standalone signal
+    "PD":     0.4,   # Context only
+    "Swings": 0.3,   # Structural reference, too common alone
+}
+
+# ── Timeframe weights — higher TF = more reliable signal
+_TF_WEIGHT: dict[str, float] = {
+    "5m":  0.5,
+    "15m": 0.6,
+    "30m": 0.7,
+    "1h":  0.8,
+    "4h":  0.9,
+    "1d":  1.0,
+}
+
+_TF_HIERARCHY = ["5m", "15m", "30m", "1h", "4h", "1d"]
+
+
+def _directional_agreement(detected_patterns: dict) -> float:
     """
-    Scores a signal from 1 to 5 based on context quality.
-    Uses pre-computed detection_cache — no extra API calls.
+    Returns a multiplier [0.5 — 1.0] based on how consistently
+    all detected patterns agree on direction.
 
-    +1 — Multiple patterns on same tf (FVG + OB together)
-    +1 — Abnormal volume present
-    +1 — CHoCH or BOS present (structural confirmation)
-    +1 — IFVG present (extra confluence)
-    +1 — Same pattern confirmed on next higher timeframe (from cache)
-    Max: 5
+    All bullish or all bearish → 1.0 (full confidence)
+    Mixed signals             → 0.5 (halved confidence)
+    Neutral/no direction      → 0.75
     """
-    score = 0
+    bullish_patterns = {"BOS", "CHoCH", "FVG", "IFVG", "OB", "Sweeps"}
+    directions = []
+    for pname, plist in detected_patterns.items():
+        for p in (plist if isinstance(plist, list) else [plist]):
+            d = p.get("direction", "") if isinstance(p, dict) else ""
+            if d in ("Bullish", "High", "Discount"):
+                directions.append("bullish")
+            elif d in ("Bearish", "Low", "Premium"):
+                directions.append("bearish")
 
-    if len(patterns) >= 2:
-        score += 1
+    if not directions:
+        return 0.75
+    bull = directions.count("bullish")
+    bear = directions.count("bearish")
+    total = bull + bear
+    if total == 0:
+        return 0.75
+    agreement = max(bull, bear) / total  # 1.0 if all same, 0.5 if split
+    return max(0.5, agreement)
 
-    if "Volume" in patterns:
-        score += 1
 
-    if "BOS" in patterns or "CHoCH" in patterns:
-        score += 1
+def _htf_bias(symbol: str, timeframe: str, pattern_types: set,
+              detection_cache: dict) -> float:
+    """
+    Higher timeframe bias multiplier.
 
-    if "IFVG" in patterns:
-        score += 1
+    If the SAME structural patterns (BOS/CHoCH/OB) appear on
+    the next 1-2 higher timeframes, return a multiplier > 1.0.
+    If HTF shows OPPOSITE direction, penalise (< 1.0).
 
-    # Higher TF check — read from cache, zero extra computation
-    tf_hierarchy  = ["5m", "15m", "30m", "1h", "4h", "1d"]
-    pattern_types = set(patterns.keys())
+    Returns multiplier in range [0.7 — 1.3].
+    """
     try:
-        tf_idx = tf_hierarchy.index(timeframe)
+        tf_idx = _TF_HIERARCHY.index(timeframe)
     except ValueError:
-        tf_idx = 0
+        return 1.0
 
-    for htf in tf_hierarchy[tf_idx + 1:]:
+    structural = {"BOS", "CHoCH", "OB", "FVG"}
+    current_structural = pattern_types & structural
+
+    if not current_structural:
+        return 1.0
+
+    htf_checks = _TF_HIERARCHY[tf_idx + 1: tf_idx + 3]  # next 2 TFs
+    if not htf_checks:
+        return 1.0
+
+    confirm_score = 0.0
+    checks = 0
+    for htf in htf_checks:
         htf_cache = detection_cache.get((symbol, htf), {})
         if not htf_cache:
             continue
-        # Any pattern in common with current tf signals?
-        if pattern_types & set(htf_cache.keys()):
-            score += 1
-        break  # only next TF up
+        checks += 1
+        overlap = current_structural & set(htf_cache.keys())
+        if overlap:
+            confirm_score += 1.0
+        else:
+            confirm_score -= 0.3  # HTF has no matching structure — slight penalty
 
-    return min(score, 5)
+    if checks == 0:
+        return 1.0
+
+    # Map [-checks, +checks] to [0.7, 1.3]
+    ratio = confirm_score / checks
+    return 1.0 + (ratio * 0.3)
+
+
+def score_signal(symbol: str, timeframe: str, patterns: dict,
+                 detection_cache: dict) -> int:
+    """
+    Weighted confidence model. Returns 1-5.
+
+    Steps:
+    1. Sum weighted pattern scores
+    2. Multiply by TF weight (higher TF = more reliable)
+    3. Multiply by directional agreement (mixed signals = lower)
+    4. Multiply by HTF bias (HTF confirmation = boost, contradiction = penalty)
+    5. Normalize to 1-5 integer scale
+    """
+    if not patterns:
+        return 1
+
+    # 1. Raw pattern score
+    raw = sum(_PATTERN_WEIGHTS.get(p, 0.3) for p in patterns)
+
+    # 2. TF weight
+    tf_w = _TF_WEIGHT.get(timeframe, 0.6)
+
+    # 3. Directional agreement
+    # detection_cache[(symbol, tf)] has full pattern dicts
+    full_patterns = detection_cache.get((symbol, timeframe), {})
+    dir_agreement = _directional_agreement(full_patterns)
+
+    # 4. HTF bias
+    htf_mult = _htf_bias(symbol, timeframe, set(patterns.keys()), detection_cache)
+
+    # 5. Final confidence score
+    confidence = raw * tf_w * dir_agreement * htf_mult
+
+    # Normalize: empirical range [0.0 — ~4.0] → [1 — 5]
+    # Using thresholds tuned for typical ICT signal density:
+    if confidence < 0.4:  return 1   # Weak
+    if confidence < 0.8:  return 2   # Moderate
+    if confidence < 1.3:  return 3   # Good
+    if confidence < 2.0:  return 4   # Strong
+    return 5                          # Excellent
 
 
 def score_to_stars(score: int) -> str:
     filled = "★" * score
-    empty = "☆" * (5 - score)
-    labels = {1: "Weak", 2: "Moderate", 3: "Good", 4: "Strong", 5: "Very Strong"}
-    return f"{filled}{empty} {score}/5 — {labels.get(score, '')}"
+    empty  = "☆" * (5 - score)
+    labels = {1: "Weak", 2: "Moderate", 3: "Good", 4: "Strong", 5: "Excellent"}
+    return f"{filled}{empty} — {labels.get(score, '')}"

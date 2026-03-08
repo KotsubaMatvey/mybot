@@ -12,10 +12,11 @@ from database import init_db
 from config import TELEGRAM_BOT_TOKEN
 from scheduler import post_init
 from handlers import (
-    start, pay_cmd, reset, stop_cmd, resume_cmd,
+    start, reset, stop_cmd, resume_cmd,
     status_cmd, zones_cmd, confluence_cmd, help_cmd,
     callback_handler, menu_button_handler
 )
+from payment_flow import pay_cmd
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
