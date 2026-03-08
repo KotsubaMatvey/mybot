@@ -12,6 +12,7 @@ from database import get_all_active_users, is_subscribed
 from interpret import pattern_to_interpretation
 from formatters import build_alert_message, utc_now, score_label
 from config import SCAN_INTERVAL, DIGEST_INTERVAL, TIMEFRAMES
+from health import record_scan, record_alert, record_error
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ async def scanner_loop(application: Application):
     while True:
         try:
             alerts, confluences, all_candles = await run_scanner()
+            record_scan()
             users = get_all_active_users()
             now   = asyncio.get_event_loop().time()
 
@@ -53,8 +55,10 @@ async def scanner_loop(application: Application):
                         msg = build_alert_message(symbol, tf, filtered, score)
                         await application.bot.send_message(uid, msg, parse_mode="Markdown")
                         signals_today[uid] = signals_today.get(uid, 0) + 1
+                        record_alert()
                     except Exception as e:
                         logger.error(f"Alert send error {uid}: {e}")
+                        record_error()
 
                 # Interpretations (confluence)
                 if user.get("confluence", True):
@@ -85,6 +89,7 @@ async def scanner_loop(application: Application):
 
         except Exception as e:
             logger.error(f"Scanner loop error: {e}")
+            record_error()
 
         await asyncio.sleep(SCAN_INTERVAL)
 

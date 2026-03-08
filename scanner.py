@@ -394,53 +394,60 @@ async def _fetch_with_sem(session, symbol, tf):
 
 async def run_scanner() -> tuple[list, list, dict]:
     """Returns (alerts, confluence_messages, all_candles)"""
+    from collections import defaultdict
     all_alerts = []
 
+    # ── 1. Fetch all candles in parallel with connection reuse
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks  = [_fetch_with_sem(session, sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
-        combos = [(sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
+        combos  = [(sym, tf) for sym in SYMBOLS for tf in TIMEFRAMES]
+        tasks   = [_fetch_with_sem(session, sym, tf) for sym, tf in combos]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Store all candles for scoring
-    all_candles = {}
+    all_candles: dict = {}
     for (symbol, tf), candles in zip(combos, results):
         if not isinstance(candles, Exception) and candles:
             all_candles[(symbol, tf)] = candles
 
-    # Reset zones
+    # ── 2. Run all detectors ONCE per (symbol, tf) — cache results
+    # detection_cache: {(symbol, tf): {pname: [pattern_dict, ...]}}
+    detection_cache: dict = {}
+    for (symbol, tf), candles in all_candles.items():
+        detection_cache[(symbol, tf)] = {}
+        for pname, detector in DETECTORS.items():
+            try:
+                detected = detector(candles)
+                if detected:
+                    detection_cache[(symbol, tf)][pname] = detected
+            except Exception:
+                pass
+
+    # ── 3. Build alerts from cache (dedup check here)
     global _active_zones
     _active_zones = {}
-
     by_symbol: dict = {sym: {} for sym in SYMBOLS}
 
-    for (symbol, tf), candles in all_candles.items():
+    for (symbol, tf), pname_map in detection_cache.items():
         tf_patterns = []
-        detected_map = {}
-        for pname, detector in DETECTORS.items():
-            detected = detector(candles)
+        for pname, detected in pname_map.items():
             for p in detected:
                 tf_patterns.append(p)
-                detected_map[pname] = p["detail"]
                 if not is_dup(symbol, tf, pname, p):
                     all_alerts.append({
-                        "symbol": symbol,
+                        "symbol":    symbol,
                         "timeframe": tf,
-                        "pattern": pname,
-                        "detail": p["detail"],
-                        "score": None,  # filled below
-                        "_map": detected_map,
+                        "pattern":   pname,
+                        "detail":    p["detail"],
+                        "direction": p.get("direction", ""),
+                        "score":     None,  # filled below
                     })
-
         if tf_patterns:
             by_symbol[symbol][tf] = tf_patterns
             _active_zones.setdefault(symbol, {})[tf] = tf_patterns
 
-    # Calculate scores
-    # Group alerts by (symbol, tf) to score together
-    from collections import defaultdict
-    grouped = defaultdict(dict)
-    grouped_alerts = defaultdict(list)
+    # ── 4. Score signals — reuse detection_cache, no extra API calls
+    grouped         = defaultdict(dict)
+    grouped_alerts  = defaultdict(list)
     for a in all_alerts:
         key = (a["symbol"], a["timeframe"])
         grouped[key][a["pattern"]] = a["detail"]
@@ -448,78 +455,63 @@ async def run_scanner() -> tuple[list, list, dict]:
 
     for key, patterns in grouped.items():
         symbol, tf = key
-        s = score_signal(symbol, tf, patterns, all_candles)
+        s = score_signal(symbol, tf, patterns, detection_cache)
         for a in grouped_alerts[key]:
             a["score"] = s
-        # clean internal key
-    for a in all_alerts:
-        a.pop("_map", None)
 
-    # Check confluence per symbol
+    # ── 5. Confluence per symbol
     all_confluences = []
     for symbol, tf_data in by_symbol.items():
         if len(tf_data) >= 2:
-            msgs = check_confluence(symbol, tf_data)
-            for msg in msgs:
+            for msg in check_confluence(symbol, tf_data):
                 all_confluences.append({"symbol": symbol, "message": msg})
 
     return all_alerts, all_confluences, all_candles
 
 
 # ── Signal Scoring ────────────────────────────────────────────────────────────
-def score_signal(symbol: str, timeframe: str, patterns: dict, all_candles: dict) -> int:
+def score_signal(symbol: str, timeframe: str, patterns: dict, detection_cache: dict) -> int:
     """
     Scores a signal from 1 to 5 based on context quality.
-    Criteria:
-    +1 — Multiple patterns on same candle (e.g. FVG + OB together)
-    +1 — Confluence with higher timeframe trend
+    Uses pre-computed detection_cache — no extra API calls.
+
+    +1 — Multiple patterns on same tf (FVG + OB together)
     +1 — Abnormal volume present
     +1 — CHoCH or BOS present (structural confirmation)
     +1 — IFVG present (extra confluence)
-    Max score: 5
+    +1 — Same pattern confirmed on next higher timeframe (from cache)
+    Max: 5
     """
     score = 0
 
-    # +1 if 2+ patterns detected on this symbol/tf
     if len(patterns) >= 2:
         score += 1
 
-    # +1 if volume spike present
     if "Volume" in patterns:
         score += 1
 
-    # +1 if structural pattern present (BOS or CHoCH)
     if "BOS" in patterns or "CHoCH" in patterns:
         score += 1
 
-    # +1 if IFVG present (filled gap acting as S/R = high quality)
     if "IFVG" in patterns:
         score += 1
 
-    # +1 if same pattern appears on a higher timeframe (multi-tf confirmation)
-    tf_hierarchy = ["5m", "15m", "30m", "1h", "4h", "1d"]
+    # Higher TF check — read from cache, zero extra computation
+    tf_hierarchy  = ["5m", "15m", "30m", "1h", "4h", "1d"]
+    pattern_types = set(patterns.keys())
     try:
         tf_idx = tf_hierarchy.index(timeframe)
     except ValueError:
         tf_idx = 0
 
-    higher_tfs = tf_hierarchy[tf_idx + 1:]
-    pattern_types = set(patterns.keys())
-    for htf in higher_tfs:
-        htf_key = (symbol, htf)
-        htf_candles = all_candles.get(htf_key, [])
-        if not htf_candles:
+    for htf in tf_hierarchy[tf_idx + 1:]:
+        htf_cache = detection_cache.get((symbol, htf), {})
+        if not htf_cache:
             continue
-        for pname, detector in DETECTORS.items():
-            if pname in pattern_types:
-                try:
-                    result = detector(htf_candles)
-                    if result:
-                        score += 1
-                        break
-                except Exception:
-                    pass
-        break  # only check next timeframe up
+        # Any pattern in common with current tf signals?
+        if pattern_types & set(htf_cache.keys()):
+            score += 1
+        break  # only next TF up
 
     return min(score, 5)
 
