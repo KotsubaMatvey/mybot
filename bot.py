@@ -15,7 +15,7 @@ from handlers import (
     start, reset, stop_cmd, resume_cmd,
     status_cmd, zones_cmd, help_cmd,
     sessions_cmd, session_status_cmd,
-    charts_cmd, chart_cmd, handle_chart_callback,
+    charts_cmd, chart_cmd,
     callback_handler, menu_button_handler
 )
 from payment_flow import pay_cmd
@@ -44,6 +44,7 @@ def main():
     app.add_handler(CommandHandler("zones",      zones_cmd))
     app.add_handler(CommandHandler("help",       help_cmd))
     app.add_handler(CommandHandler("session",    session_status_cmd))
+    app.add_handler(CommandHandler("chart",      chart_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_button_handler))
 

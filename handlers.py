@@ -15,7 +15,7 @@ from scanner import get_active_zones
 from keyboards import main_menu, confirm_stop_keyboard
 from formatters import build_dashboard_message, utc_now
 from alerts import signals_today
-from config import SYMBOLS, TIMEFRAMES, OWNER_IDS
+from config import SYMBOLS, TIMEFRAMES, OWNER_IDS, WELCOME_PHOTO
 from sessions import get_current_session_message
 from visuals  import generate_chart
 from scanner  import get_cached_candles, get_cached_patterns
@@ -66,7 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await payment_flow.send_payment_screen(user_id, context, update, expired=True)
         return
 
-    photo_path = "/mnt/user-data/uploads/IMG_0293.jpeg"
+    photo_path = WELCOME_PHOTO
     welcome_text = (
         "📡 ICT Crypto Alerts\n\n"
         "Real-time ICT pattern scanner for Binance Futures.\n\n"
