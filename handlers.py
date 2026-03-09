@@ -13,7 +13,7 @@ from database import (
 )
 from scanner import get_active_zones
 from keyboards import main_menu, confirm_stop_keyboard
-from formatters import build_dashboard_message, utc_now
+from formatters import build_dashboard_message, build_alert_message, utc_now
 from alerts import signals_today
 from config import SYMBOLS, TIMEFRAMES, OWNER_IDS, WELCOME_PHOTO
 from sessions import get_current_session_message
@@ -233,16 +233,17 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text("⏳ Generating chart…")
     try:
+        user     = get_user(user_id)
+        u_pats   = set(user.get("patterns", []))
         patterns = get_cached_patterns(symbol, tf)
+        patterns = [p for p in patterns if p.get("pattern") in u_pats]
         chart = await generate_chart(candles, patterns, symbol, tf)
         if not chart:
             await msg.edit_text("Chart generation failed.")
             return
         await msg.delete()
-        caption = f"`{symbol}  ·  {tf}`"
-        if patterns:
-            caption += "\n" + "\n".join(f"  ▪ {p['detail']}" for p in patterns)
-        await update.message.reply_photo(photo=chart, caption=caption, parse_mode="Markdown")
+        caption = build_alert_message(symbol, tf, patterns) if patterns else f"{symbol}  ·  {tf}"
+        await update.message.reply_photo(photo=chart, caption=caption)
     except Exception as e:
         logger.error(f"chart_cmd {symbol} {tf}: {e}")
         await msg.edit_text("Error generating chart.")
@@ -273,16 +274,17 @@ async def handle_chart_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     loading = await query.message.reply_text("⏳ Generating chart…")
     try:
+        user     = get_user(query.from_user.id)
+        u_pats   = set(user.get("patterns", []))
         patterns = get_cached_patterns(symbol, tf)
+        patterns = [p for p in patterns if p.get("pattern") in u_pats]
         chart = await generate_chart(candles, patterns, symbol, tf)
         if not chart:
             await loading.edit_text("Chart generation failed.")
             return
         await loading.delete()
-        caption = f"`{symbol}  ·  {tf}`"
-        if patterns:
-            caption += "\n" + "\n".join(f"  ▪ {p['detail']}" for p in patterns)
-        await query.message.reply_photo(photo=chart, caption=caption, parse_mode="Markdown")
+        caption = build_alert_message(symbol, tf, patterns) if patterns else f"{symbol}  ·  {tf}"
+        await query.message.reply_photo(photo=chart, caption=caption)
     except Exception as e:
         logger.error(f"chart callback {symbol} {tf}: {e}")
         await loading.edit_text("Error generating chart.")
@@ -361,14 +363,14 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
 
     dispatch = {
-        "📊 Zones":      zones_cmd,
-        "⚙️ Settings":  reset,
-        "ℹ️ Status":    status_cmd,
-        "❓ Help":       help_cmd,
-        "⏸ Stop":       stop_cmd,
-        "▶️ Resume":    resume_cmd,
-        "🕐 Sessions":  sessions_cmd,
-        "📊 Charts":    charts_cmd,
+        "▦ ZONES":     zones_cmd,
+        "◎ SETTINGS":  reset,
+        "◈ STATUS":    status_cmd,
+        "? HELP":      help_cmd,
+        "■ STOP":      stop_cmd,
+        "▶ RESUME":    resume_cmd,
+        "◷ SESSIONS":  sessions_cmd,
+        "▤ CHARTS":    charts_cmd,
     }
     handler = dispatch.get(text)
     if handler:

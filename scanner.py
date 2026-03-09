@@ -24,7 +24,7 @@ def get_cached_patterns(symbol: str, tf: str) -> list:
     return _pattern_cache.get((symbol, tf), [])
 
 BINANCE_BASE = "https://fapi.binance.com"
-ALL_PATTERNS = ["FVG", "IFVG", "OB", "BOS", "CHoCH", "Swings", "Sweeps", "Volume", "PD"]
+ALL_PATTERNS = ["FVG", "IFVG", "OB", "BOS", "CHoCH", "Swings", "Sweeps", "Volume", "PD", "Breaker", "EQH", "EQL"]
 
 
 def ts_utc(ts_ms: int) -> str:
@@ -45,7 +45,8 @@ async def fetch_candles(session, symbol, interval, limit=CANDLE_LIMIT):
             data = await resp.json()
         return [{"time": int(c[0]), "open": float(c[1]), "high": float(c[2]),
                   "low": float(c[3]), "close": float(c[4]), "volume": float(c[5])} for c in data]
-    except Exception:
+    except Exception as e:
+        logger.error(f"fetch_candles {symbol} {interval}: {type(e).__name__}: {e}")
         return []
 
 
@@ -161,59 +162,269 @@ def detect_ifvg(candles):
 # ── Order Block (proper ICT definition) ──────────────────────────────────────
 def detect_ob(candles):
     """
-    Bullish OB: last bearish candle before a BOS upward (price breaks swing high).
-    Bearish OB: last bullish candle before a BOS downward.
+    ICT OB: last candle of opposite color before a BOS, price then returns to that zone.
+
+    Bullish OB: last bearish candle before price broke a swing high.
+                Alert when current price re-enters ob_low..ob_high from above.
+    Bearish OB: last bullish candle before price broke a swing low.
+                Alert when current price re-enters ob_low..ob_high from below.
     """
     results = []
-    if len(candles) < 10:
+    if len(candles) < 15:
         return results
 
-    last = candles[-1]
-    lookback = candles[-10:-1]
-    swing_high = max(c["high"] for c in lookback)
-    swing_low = min(c["low"] for c in lookback)
+    current = candles[-1]
+    lookback = candles[-30:-1]
 
-    # Bullish OB: price just broke above swing high
-    if last["close"] > swing_high:
-        for c in reversed(lookback):
-            if c["close"] < c["open"]:  # bearish candle = bullish OB
-                results.append({
-                    "type": "OB", "direction": "Bullish",
-                    "ob_high": c["high"], "ob_low": c["low"],
-                    "detail": (f"OB: {ts_utc(c['time'])} | "
-                               f"{fmt_price(c['low'])} - {fmt_price(c['high'])} | Bullish OB")
-                })
+    swing_high = max(c["high"] for c in lookback[-15:])
+    swing_low  = min(c["low"]  for c in lookback[-15:])
+
+    # ── Bullish OB: find last bearish candle before swing_high was broken
+    bos_up_idx = None
+    for i, c in enumerate(lookback):
+        if c["close"] > swing_high:
+            bos_up_idx = i
+            break
+    if bos_up_idx is not None and bos_up_idx > 0:
+        # OB = last bearish candle before the BOS candle
+        for c in reversed(lookback[:bos_up_idx]):
+            if c["close"] < c["open"]:
+                ob_low, ob_high = c["low"], c["high"]
+                # Alert only when current price returns into OB zone
+                if ob_low <= current["low"] <= ob_high or ob_low <= current["close"] <= ob_high:
+                    results.append({
+                        "type": "OB", "direction": "Bullish",
+                        "ob_high": ob_high, "ob_low": ob_low,
+                        "time": c["time"],
+                        "detail": (f"OB: {ts_utc(c['time'])} | "
+                                   f"{fmt_price(ob_low)} - {fmt_price(ob_high)} | Bullish OB")
+                    })
                 break
 
-    # Bearish OB: price just broke below swing low
-    elif last["close"] < swing_low:
-        for c in reversed(lookback):
-            if c["close"] > c["open"]:  # bullish candle = bearish OB
-                results.append({
-                    "type": "OB", "direction": "Bearish",
-                    "ob_high": c["high"], "ob_low": c["low"],
-                    "detail": (f"OB: {ts_utc(c['time'])} | "
-                               f"{fmt_price(c['low'])} - {fmt_price(c['high'])} | Bearish OB")
-                })
+    # ── Bearish OB: find last bullish candle before swing_low was broken
+    bos_dn_idx = None
+    for i, c in enumerate(lookback):
+        if c["close"] < swing_low:
+            bos_dn_idx = i
+            break
+    if bos_dn_idx is not None and bos_dn_idx > 0:
+        for c in reversed(lookback[:bos_dn_idx]):
+            if c["close"] > c["open"]:
+                ob_low, ob_high = c["low"], c["high"]
+                if ob_low <= current["high"] <= ob_high or ob_low <= current["close"] <= ob_high:
+                    results.append({
+                        "type": "OB", "direction": "Bearish",
+                        "ob_high": ob_high, "ob_low": ob_low,
+                        "time": c["time"],
+                        "detail": (f"OB: {ts_utc(c['time'])} | "
+                                   f"{fmt_price(ob_low)} - {fmt_price(ob_high)} | Bearish OB")
+                    })
                 break
+
     return results
+
+
+# ── Breaker Block ─────────────────────────────────────────────────────────────
+def detect_breaker(candles):
+    """
+    ICT Breaker Block: a failed OB that flips polarity.
+
+    Bullish Breaker: last bullish candle before price swept a swing low (BOS down),
+                     then price broke back up through swing high.
+                     Alert when price returns to that candle's range from above.
+
+    Bearish Breaker: last bearish candle before price swept a swing high (BOS up),
+                     then price broke back down through swing low.
+                     Alert when price returns to that candle's range from below.
+    """
+    results = []
+    if len(candles) < 20:
+        return results
+
+    current  = candles[-1]
+    lookback = candles[-40:-1]
+    n = len(lookback)
+
+    # ── Bullish Breaker: sweep low → BOS up → price returns to last bullish candle
+    swing_low = min(c["low"] for c in lookback[-15:])
+    # Find where sweep of low happened
+    sweep_idx = None
+    for i in range(n - 1, -1, -1):
+        if lookback[i]["low"] < swing_low and lookback[i]["close"] > swing_low:
+            sweep_idx = i
+            break
+    if sweep_idx is not None and sweep_idx < n - 2:
+        # Find BOS up after sweep
+        post_sweep_high = max(c["high"] for c in lookback[max(0, sweep_idx-5):sweep_idx])
+        bos_up = any(c["close"] > post_sweep_high for c in lookback[sweep_idx+1:])
+        if bos_up:
+            # Breaker = last bullish candle before sweep
+            for c in reversed(lookback[:sweep_idx]):
+                if c["close"] > c["open"]:
+                    ob_low, ob_high = c["low"], c["high"]
+                    if ob_low <= current["low"] <= ob_high or ob_low <= current["close"] <= ob_high:
+                        results.append({
+                            "type": "OB", "direction": "Bullish",
+                            "ob_high": ob_high, "ob_low": ob_low,
+                            "time": c["time"],
+                            "detail": (f"BREAKER: {ts_utc(c['time'])} | "
+                                       f"{fmt_price(ob_low)} - {fmt_price(ob_high)} | Bullish Breaker")
+                        })
+                    break
+
+    # ── Bearish Breaker: sweep high → BOS down → price returns to last bearish candle
+    swing_high = max(c["high"] for c in lookback[-15:])
+    sweep_idx = None
+    for i in range(n - 1, -1, -1):
+        if lookback[i]["high"] > swing_high and lookback[i]["close"] < swing_high:
+            sweep_idx = i
+            break
+    if sweep_idx is not None and sweep_idx < n - 2:
+        post_sweep_low = min(c["low"] for c in lookback[max(0, sweep_idx-5):sweep_idx])
+        bos_dn = any(c["close"] < post_sweep_low for c in lookback[sweep_idx+1:])
+        if bos_dn:
+            for c in reversed(lookback[:sweep_idx]):
+                if c["close"] < c["open"]:
+                    ob_low, ob_high = c["low"], c["high"]
+                    if ob_low <= current["high"] <= ob_high or ob_low <= current["close"] <= ob_high:
+                        results.append({
+                            "type": "OB", "direction": "Bearish",
+                            "ob_high": ob_high, "ob_low": ob_low,
+                            "time": c["time"],
+                            "detail": (f"BREAKER: {ts_utc(c['time'])} | "
+                                       f"{fmt_price(ob_low)} - {fmt_price(ob_high)} | Bearish Breaker")
+                        })
+                    break
+
+    return results
+# ── Equal Highs / Equal Lows (EQH / EQL) ─────────────────────────────────────
+def _find_swing_levels(candles):
+    """Helper: returns (swing_highs, swing_lows) lists from lookback."""
+    lookback  = candles[-50:-1]
+    avg_range = sum(abs(c["high"] - c["low"]) for c in lookback) / len(lookback)
+    min_range = avg_range * 0.3
+    sh_levels, sl_levels = [], []
+    for i in range(1, len(lookback) - 1):
+        c_prev, c_mid, c_next = lookback[i-1], lookback[i], lookback[i+1]
+        if (c_mid["high"] - c_mid["low"]) < min_range:
+            continue
+        if c_mid["high"] > c_prev["high"] and c_mid["high"] > c_next["high"]:
+            sh_levels.append(c_mid["high"])
+        if c_mid["low"] < c_prev["low"] and c_mid["low"] < c_next["low"]:
+            sl_levels.append(c_mid["low"])
+    return sh_levels, sl_levels
+
+
+def detect_eqh(candles):
+    """
+    Equal Highs (EQH): two or more swing highs within 0.1% of each other.
+    Explicit buy-side liquidity pool. Alert when price approaches from below.
+    """
+    if len(candles) < 20:
+        return []
+    current = candles[-1]
+    sh_levels, _ = _find_swing_levels(candles)
+    tolerance = 0.001  # 0.1%
+
+    seen = set()
+    for level in sh_levels:
+        if level in seen:
+            continue
+        matches = [l for l in sh_levels if abs(l - level) / level <= tolerance]
+        for m in matches:
+            seen.add(m)
+        if len(matches) >= 2:
+            eqh = sum(matches) / len(matches)
+            proximity = abs(current["high"] - eqh) / eqh
+            if current["high"] <= eqh and proximity <= 0.002:
+                return [{
+                    "type": "EQH", "direction": "Bearish",
+                    "level": eqh, "time": current["time"],
+                    "detail": (f"EQH: {ts_utc(current['time'])} | "
+                               f"{fmt_price(eqh)} | Equal Highs — BSL above ({len(matches)} touches)")
+                }]
+    return []
+
+
+def detect_eql(candles):
+    """
+    Equal Lows (EQL): two or more swing lows within 0.1% of each other.
+    Explicit sell-side liquidity pool. Alert when price approaches from above.
+    """
+    if len(candles) < 20:
+        return []
+    current = candles[-1]
+    _, sl_levels = _find_swing_levels(candles)
+    tolerance = 0.001
+
+    seen = set()
+    for level in sl_levels:
+        if level in seen:
+            continue
+        matches = [l for l in sl_levels if abs(l - level) / level <= tolerance]
+        for m in matches:
+            seen.add(m)
+        if len(matches) >= 2:
+            eql = sum(matches) / len(matches)
+            proximity = abs(current["low"] - eql) / eql
+            if current["low"] >= eql and proximity <= 0.002:
+                return [{
+                    "type": "EQL", "direction": "Bullish",
+                    "level": eql, "time": current["time"],
+                    "detail": (f"EQL: {ts_utc(current['time'])} | "
+                               f"{fmt_price(eql)} | Equal Lows — SSL below ({len(matches)} touches)")
+                }]
+    return []
 
 
 # ── BOS (Break of Structure) ──────────────────────────────────────────────────
 def detect_bos(candles):
+    """
+    ICT BOS (Break of Structure): price closes beyond the LAST confirmed swing high/low.
+
+    Bullish BOS: close above last swing high → market shifted bullish.
+    Bearish BOS: close below last swing low  → market shifted bearish.
+
+    Uses real 3-candle swing structure.
+    lookback[-32:-2] gives swing candidates where the right-neighbour exists in the window.
+    """
     if len(candles) < 20:
         return []
-    lookback = candles[-20:-1]
-    last = candles[-1]
-    swing_high = max(c["high"] for c in lookback)
-    swing_low = min(c["low"] for c in lookback)
-    if last["close"] > swing_high:
-        return [{"type": "BOS", "direction": "Bullish", "level": swing_high,
-                 "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(swing_high)} | Bullish BOS"}]
-    if last["close"] < swing_low:
-        return [{"type": "BOS", "direction": "Bearish", "level": swing_low,
-                 "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(swing_low)} | Bearish BOS"}]
-    return []
+
+    # Use a wider range for finding swings, exclude last 2 candles as they may
+    # not have a confirmed right neighbour yet
+    scan = candles[-35:]
+    lookback = scan[:-2]      # swing detection window
+    last     = candles[-1]
+
+    avg_range = sum(abs(c["high"] - c["low"]) for c in lookback) / len(lookback)
+    min_range = avg_range * 0.3
+
+    last_sh = None
+    last_sl = None
+
+    # Find the most recent significant swing high and swing low
+    for i in range(len(lookback) - 2, 0, -1):
+        c_prev, c_mid, c_next = lookback[i-1], lookback[i], lookback[i+1]
+        if (c_mid["high"] - c_mid["low"]) < min_range:
+            continue
+        if last_sh is None and c_mid["high"] > c_prev["high"] and c_mid["high"] > c_next["high"]:
+            last_sh = c_mid["high"]
+        if last_sl is None and c_mid["low"] < c_prev["low"] and c_mid["low"] < c_next["low"]:
+            last_sl = c_mid["low"]
+        if last_sh is not None and last_sl is not None:
+            break
+
+    results = []
+    if last_sh is not None and last["close"] > last_sh:
+        results.append({"type": "BOS", "direction": "Bullish", "level": last_sh,
+                        "time": last["time"],
+                        "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(last_sh)} | Bullish BOS"})
+    if last_sl is not None and last["close"] < last_sl:
+        results.append({"type": "BOS", "direction": "Bearish", "level": last_sl,
+                        "time": last["time"],
+                        "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(last_sl)} | Bearish BOS"})
+    return results
 
 
 # ── CHoCH (Change of Character) ───────────────────────────────────────────────
@@ -258,79 +469,228 @@ def detect_choch(candles):
 
 # ── Swings (Liquidity Pools) ──────────────────────────────────────────────────
 def detect_swings(candles):
-    if len(candles) < 3:
+    """
+    ICT Swing High: 3-candle pattern — middle candle has higher high than both neighbours.
+    ICT Swing Low:  3-candle pattern — middle candle has lower low than both neighbours.
+    Color of candles is irrelevant.
+
+    Significance filter: the swing candle body must be >= 30% of the average candle
+    range over the lookback period. This eliminates doji/noise swings.
+    Only the most recent significant swing is reported.
+    """
+    if len(candles) < 10:
         return []
-    c0, c1, c2 = candles[-3], candles[-2], candles[-1]
-    if c1["high"] > c0["high"] and c1["high"] > c2["high"]:
-        return [{"type": "Swings", "direction": "High", "level": c1["high"],
-                 "detail": f"SWING: {ts_utc(c1['time'])} | {fmt_price(c1['high'])} | Swing High"}]
-    if c1["low"] < c0["low"] and c1["low"] < c2["low"]:
-        return [{"type": "Swings", "direction": "Low", "level": c1["low"],
-                 "detail": f"SWING: {ts_utc(c1['time'])} | {fmt_price(c1['low'])} | Swing Low"}]
+
+    lookback = candles[-30:]
+    avg_range = sum(abs(c["high"] - c["low"]) for c in lookback) / len(lookback)
+    min_range = avg_range * 0.3  # swing candle must be meaningful
+
+    # Scan from newest to oldest (skip last candle — needs right neighbour)
+    for i in range(len(lookback) - 2, 0, -1):
+        c_prev = lookback[i - 1]
+        c_mid  = lookback[i]
+        c_next = lookback[i + 1]
+        candle_range = c_mid["high"] - c_mid["low"]
+
+        if candle_range < min_range:
+            continue  # noise candle, skip
+
+        if c_mid["high"] > c_prev["high"] and c_mid["high"] > c_next["high"]:
+            return [{"type": "Swings", "direction": "High", "level": c_mid["high"],
+                     "time": c_mid["time"],
+                     "detail": f"SWING: {ts_utc(c_mid['time'])} | {fmt_price(c_mid['high'])} | Swing High"}]
+
+        if c_mid["low"] < c_prev["low"] and c_mid["low"] < c_next["low"]:
+            return [{"type": "Swings", "direction": "Low", "level": c_mid["low"],
+                     "time": c_mid["time"],
+                     "detail": f"SWING: {ts_utc(c_mid['time'])} | {fmt_price(c_mid['low'])} | Swing Low"}]
+
     return []
 
 
 # ── Sweeps (Liquidity Sweeps) ─────────────────────────────────────────────────
 def detect_sweeps(candles):
-    if len(candles) < 20:
+    """
+    ICT Liquidity Sweep: price wicks above a real swing high (or below swing low)
+    but CLOSES back on the other side. This is the turtle soup / false breakout.
+
+    Uses real swing highs/lows (3-candle structure) from the last 30 candles,
+    not a simple max/min. Requires meaningful swing (size filter).
+    """
+    if len(candles) < 25:
         return []
-    lookback = candles[-20:-1]
-    last = candles[-1]
-    swing_high = max(c["high"] for c in lookback)
-    swing_low = min(c["low"] for c in lookback)
-    if last["high"] > swing_high and last["close"] < swing_high:
-        return [{"type": "Sweeps", "direction": "Bearish", "level": swing_high,
-                 "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(swing_high)} | Bearish Sweep"}]
-    if last["low"] < swing_low and last["close"] > swing_low:
-        return [{"type": "Sweeps", "direction": "Bullish", "level": swing_low,
-                 "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(swing_low)} | Bullish Sweep"}]
-    return []
+
+    last     = candles[-1]
+    lookback = candles[-30:-1]
+    avg_range = sum(abs(c["high"] - c["low"]) for c in lookback) / len(lookback)
+    min_range = avg_range * 0.3
+
+    # Collect real swing highs and lows
+    swing_highs = []
+    swing_lows  = []
+    for i in range(1, len(lookback) - 1):
+        c_prev, c_mid, c_next = lookback[i-1], lookback[i], lookback[i+1]
+        if (c_mid["high"] - c_mid["low"]) < min_range:
+            continue
+        if c_mid["high"] > c_prev["high"] and c_mid["high"] > c_next["high"]:
+            swing_highs.append(c_mid["high"])
+        if c_mid["low"] < c_prev["low"] and c_mid["low"] < c_next["low"]:
+            swing_lows.append(c_mid["low"])
+
+    results = []
+
+    if swing_highs:
+        nearest_sh = max(swing_highs)  # most recent significant swing high
+        if last["high"] > nearest_sh and last["close"] < nearest_sh:
+            results.append({
+                "type": "Sweeps", "direction": "Bearish", "level": nearest_sh,
+                "time": last["time"],
+                "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(nearest_sh)} | Bearish Sweep"
+            })
+
+    if swing_lows:
+        nearest_sl = min(swing_lows)
+        if last["low"] < nearest_sl and last["close"] > nearest_sl:
+            results.append({
+                "type": "Sweeps", "direction": "Bullish", "level": nearest_sl,
+                "time": last["time"],
+                "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(nearest_sl)} | Bullish Sweep"
+            })
+
+    return results
 
 
 # ── Volume ────────────────────────────────────────────────────────────────────
 def detect_volume(candles):
-    if len(candles) < 16:
+    """
+    Significant volume spike: current candle volume > 2.0x the 20-candle average.
+    3% threshold (old code) is background noise. 2x is the first meaningful level.
+    Shows tier: Notable (2x), Elevated (3x), Extreme (5x+).
+    """
+    if len(candles) < 22:
         return []
     last = candles[-1]
-    avg_vol = sum(c["volume"] for c in candles[-16:-1]) / 15
+    avg_vol = sum(c["volume"] for c in candles[-21:-1]) / 20
     if avg_vol == 0:
         return []
-    if last["volume"] > avg_vol * 1.03:
-        pct = ((last["volume"] / avg_vol) - 1) * 100
-        usd_vol = last["volume"] * last["close"]
-        usd_str = f"${usd_vol/1_000_000:.1f}M" if usd_vol >= 1_000_000 else f"${usd_vol/1_000:.0f}K"
-        coin = last["volume"]
-        detail = (f"VOLUME: {ts_utc(last['time'])} | "
-                  f"{coin:.2f} coins ({usd_str}) | +{pct:.1f}% above avg")
-        return [{"type": "Volume", "direction": "High", "level": coin, "detail": detail}]
-    return []
+
+    ratio = last["volume"] / avg_vol
+    if ratio < 2.0:
+        return []  # not significant
+
+    pct = (ratio - 1) * 100
+    usd_vol = last["volume"] * last["close"]
+    usd_str = f"${usd_vol/1_000_000:.1f}M" if usd_vol >= 1_000_000 else f"${usd_vol/1_000:.0f}K"
+
+    if ratio >= 5.0:
+        tier = "Extreme"
+    elif ratio >= 3.0:
+        tier = "Elevated"
+    else:
+        tier = "Notable"
+
+    direction = "Bullish" if last["close"] >= last["open"] else "Bearish"
+    detail = (f"VOLUME: {ts_utc(last['time'])} | {usd_str} | "
+              f"+{pct:.0f}% avg | {tier} {direction}")
+    return [{"type": "Volume", "direction": direction,
+             "level": last["volume"], "time": last["time"], "detail": detail}]
 
 
-# ── Premium / Discount Zones ──────────────────────────────────────────────────
+# ── Premium / Discount / OTE Zones ───────────────────────────────────────────
 def detect_pd_zones(candles):
     """
-    Premium: price above 50% of last 50-candle range (sell zone).
-    Discount: price below 50% of range (buy zone).
-    Alert only when price enters the zone.
-    """
-    if len(candles) < 50:
-        return []
-    lookback = candles[-50:]
-    hi = max(c["high"] for c in lookback)
-    lo = min(c["low"] for c in lookback)
-    eq = (hi + lo) / 2  # equilibrium
-    last = candles[-1]
-    prev = candles[-2]
+    ICT Premium/Discount based on last significant swing range.
 
-    # Price just crossed above equilibrium into premium
-    if prev["close"] <= eq < last["close"]:
-        return [{"type": "PD", "direction": "Premium",
-                 "detail": f"PREMIUM ZONE: {ts_utc(last['time'])} | EQ {fmt_price(eq)} | Price entering premium (sell area)"}]
-    # Price just crossed below equilibrium into discount
-    if prev["close"] >= eq > last["close"]:
-        return [{"type": "PD", "direction": "Discount",
-                 "detail": f"DISCOUNT ZONE: {ts_utc(last['time'])} | EQ {fmt_price(eq)} | Price entering discount (buy area)"}]
-    return []
+    Equilibrium = 50% of the range between last swing high and last swing low.
+    OTE (Optimal Trade Entry) = 61.8% - 78.6% retracement — high-probability entry zone.
+
+    Bullish context: last swing low below last swing high, price retracing into discount OTE.
+    Bearish context: last swing high above last swing low, price retracing into premium OTE.
+    """
+    if len(candles) < 30:
+        return []
+
+    scan     = candles[-50:]
+    current  = candles[-1]
+    prev     = candles[-2]
+    avg_range = sum(abs(c["high"] - c["low"]) for c in scan) / len(scan)
+    min_range = avg_range * 0.3
+
+    # Find last significant swing high and swing low
+    last_sh_val = last_sh_idx = None
+    last_sl_val = last_sl_idx = None
+
+    for i in range(len(scan) - 3, 0, -1):
+        c_prev, c_mid, c_next = scan[i-1], scan[i], scan[i+1]
+        if (c_mid["high"] - c_mid["low"]) < min_range:
+            continue
+        if last_sh_val is None and c_mid["high"] > c_prev["high"] and c_mid["high"] > c_next["high"]:
+            last_sh_val = c_mid["high"]
+            last_sh_idx = i
+        if last_sl_val is None and c_mid["low"] < c_prev["low"] and c_mid["low"] < c_next["low"]:
+            last_sl_val = c_mid["low"]
+            last_sl_idx = i
+        if last_sh_val is not None and last_sl_val is not None:
+            break
+
+    if last_sh_val is None or last_sl_val is None:
+        return []
+
+    hi = last_sh_val
+    lo = last_sl_val
+    eq = (hi + lo) / 2
+
+    # OTE for BULLISH context: swing low formed AFTER swing high (downtrend, now retracing up)
+    # Price should be below equilibrium for a buy setup
+    # Retracement of a DOWN leg (hi → lo): OTE bounce = 61.8-78.6% of (hi-lo) from lo
+    # Retracement of an UP leg  (lo → hi): OTE pullback = 61.8-78.6% of (hi-lo) from hi
+
+    results = []
+
+    # Bullish OTE: swing low was more recent than swing high → price retracing UP into OTE
+    if last_sl_idx > last_sh_idx:
+        # Down leg from hi to lo; now looking for bounce
+        ote_lo = lo + (hi - lo) * 0.618   # 61.8% bounce level
+        ote_hi = lo + (hi - lo) * 0.786   # 78.6% bounce level
+        in_ote_now  = ote_lo <= current["high"] <= ote_hi
+        in_ote_prev = ote_lo <= prev["high"]    <= ote_hi
+        if in_ote_now and not in_ote_prev:
+            results.append({
+                "type": "PD", "direction": "Discount",
+                "level": eq, "time": current["time"],
+                "detail": (f"OTE ZONE: {ts_utc(current['time'])} | "
+                           f"{fmt_price(ote_lo)} - {fmt_price(ote_hi)} | "
+                           f"Bullish OTE — buy area (61.8-78.6% retrace)")
+            })
+
+    # Bearish OTE: swing high was more recent than swing low → price retracing DOWN into OTE
+    elif last_sh_idx > last_sl_idx:
+        # Up leg from lo to hi; now looking for pullback
+        ote_hi = hi - (hi - lo) * 0.618   # 61.8% pullback level
+        ote_lo = hi - (hi - lo) * 0.786   # 78.6% pullback level
+        in_ote_now  = ote_lo <= current["low"] <= ote_hi
+        in_ote_prev = ote_lo <= prev["low"]    <= ote_hi
+        if in_ote_now and not in_ote_prev:
+            results.append({
+                "type": "PD", "direction": "Premium",
+                "level": eq, "time": current["time"],
+                "detail": (f"OTE ZONE: {ts_utc(current['time'])} | "
+                           f"{fmt_price(ote_lo)} - {fmt_price(ote_hi)} | "
+                           f"Bearish OTE — sell area (61.8-78.6% retrace)")
+            })
+
+    # Fallback: equilibrium cross (weaker signal, context only)
+    if not results:
+        if prev["close"] <= eq < current["close"]:
+            results.append({"type": "PD", "direction": "Premium",
+                             "level": eq, "time": current["time"],
+                             "detail": f"PREMIUM: {ts_utc(current['time'])} | EQ {fmt_price(eq)} | Above equilibrium"})
+        elif prev["close"] >= eq > current["close"]:
+            results.append({"type": "PD", "direction": "Discount",
+                             "level": eq, "time": current["time"],
+                             "detail": f"DISCOUNT: {ts_utc(current['time'])} | EQ {fmt_price(eq)} | Below equilibrium"})
+
+    return results
 
 
 # ── Multi-timeframe confluence ────────────────────────────────────────────────
@@ -385,15 +745,18 @@ def is_dup(symbol: str, tf: str, ptype: str, pattern: dict) -> bool:
 
 
 DETECTORS = {
-    "FVG": detect_fvg,
-    "IFVG": detect_ifvg,
-    "OB": detect_ob,
-    "BOS": detect_bos,
-    "CHoCH": detect_choch,
-    "Swings": detect_swings,
-    "Sweeps": detect_sweeps,
-    "Volume": detect_volume,
-    "PD": detect_pd_zones,
+    "FVG":     detect_fvg,
+    "IFVG":    detect_ifvg,
+    "OB":      detect_ob,
+    "Breaker": detect_breaker,
+    "EQH":     detect_eqh,
+    "EQL":     detect_eql,
+    "BOS":     detect_bos,
+    "CHoCH":   detect_choch,
+    "Swings":  detect_swings,
+    "Sweeps":  detect_sweeps,
+    "Volume":  detect_volume,
+    "PD":      detect_pd_zones,
 }
 
 
@@ -516,15 +879,18 @@ async def run_scanner() -> tuple[list, list, dict]:
 #
 # ── Pattern weights (how much raw confidence each pattern contributes)
 _PATTERN_WEIGHTS: dict[str, float] = {
-    "CHoCH":  1.0,   # Highest — structural shift, hardest to fake
-    "BOS":    0.9,   # Strong structural confirmation
-    "IFVG":   0.8,   # Filled gap acting as S/R — reliable
-    "OB":     0.7,   # Demand/supply zone
-    "FVG":    0.6,   # Unfilled gap — good but common
-    "Sweeps": 0.6,   # Liquidity sweep — directional
-    "Volume": 0.4,   # Amplifier, not a standalone signal
-    "PD":     0.4,   # Context only
-    "Swings": 0.3,   # Structural reference, too common alone
+    "CHoCH":   1.0,   # Highest — structural shift, hardest to fake
+    "BOS":     0.9,   # Strong structural confirmation
+    "IFVG":    0.8,   # Filled gap acting as S/R — reliable
+    "Breaker": 0.8,   # Failed OB flipped — high confluence setup
+    "OB":      0.7,   # Demand/supply zone, confirmed on return
+    "EQH":     0.7,   # Equal highs = explicit liquidity target
+    "EQL":     0.7,   # Equal lows = explicit liquidity target
+    "FVG":     0.6,   # Unfilled gap — good but common
+    "Sweeps":  0.6,   # Liquidity sweep — directional
+    "Volume":  0.4,   # Amplifier, not a standalone signal
+    "PD":      0.4,   # Context only
+    "Swings":  0.3,   # Structural reference, too common alone
 }
 
 # ── Timeframe weights — higher TF = more reliable signal

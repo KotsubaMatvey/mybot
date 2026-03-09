@@ -25,18 +25,10 @@ def fmt_price(p: float) -> str:
 
 
 def build_alert_message(symbol: str, timeframe: str, patterns_meta: list) -> str:
-    """
-    ICT pattern alert.
-
-    Format:
-      BTCUSDT (5m):                ← header
-        — FVG: 14:55 | 15:05 | 45030.0 - 44954.6 | Bearish FVG
-        — SWING: 15:00 | 44803.5 | Swing Low
-    """
-    lines = [f"{symbol} ({timeframe}):"]
+    lines = [f"{symbol}  ·  {timeframe}"]
     for p in patterns_meta:
         detail = p.get("detail", "")
-        lines.append(f"  ▪ {detail}")
+        lines.append(f"■  {detail}")
     return "\n".join(lines)
 
 

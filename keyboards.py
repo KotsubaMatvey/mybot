@@ -8,10 +8,10 @@ from scanner import ALL_PATTERNS
 
 def main_menu() -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton("📊 Zones"),    KeyboardButton("ℹ️ Status")],
-        [KeyboardButton("⚙️ Settings"), KeyboardButton("🕐 Sessions"), KeyboardButton("📊 Charts")],
-        [KeyboardButton("⏸ Stop"),      KeyboardButton("▶️ Resume")],
-        [KeyboardButton("❓ Help")],
+        [KeyboardButton("▦ ZONES"),    KeyboardButton("◈ STATUS")],
+        [KeyboardButton("◎ SETTINGS"), KeyboardButton("◷ SESSIONS"), KeyboardButton("▤ CHARTS")],
+        [KeyboardButton("■ STOP"),      KeyboardButton("▶ RESUME")],
+        [KeyboardButton("? HELP")],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
