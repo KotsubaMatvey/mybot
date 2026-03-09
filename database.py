@@ -84,18 +84,31 @@ def get_user(user_id: int) -> dict | None:
 
 
 def get_all_active_users() -> list:
+    from datetime import datetime, timezone
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM users WHERE active=1 AND setup_done=1").fetchall()
-        return [
-            {
-                "user_id": r["user_id"],
-                "symbols": set(json.loads(r["symbols"])),
-                "patterns": set(json.loads(r["patterns"])),
-                "timeframes": set(json.loads(r["timeframes"])),
-                "confluence": bool(r["confluence"]) if r["confluence"] is not None else True,
-            }
-            for r in rows
-        ]
+    now = datetime.now(timezone.utc)
+    result = []
+    for r in rows:
+        # Inline subscription check — avoids second DB query per user
+        is_owner = bool(r["is_owner"]) if r["is_owner"] is not None else False
+        expires  = r["expires_at"]
+        if not is_owner:
+            if not expires:
+                continue
+            try:
+                if now >= datetime.fromisoformat(expires):
+                    continue
+            except Exception:
+                continue
+        result.append({
+            "user_id":        r["user_id"],
+            "symbols":        set(json.loads(r["symbols"])),
+            "patterns":       set(json.loads(r["patterns"])),
+            "timeframes":     set(json.loads(r["timeframes"])),
+            "charts_enabled": bool(r["charts_enabled"]) if r["charts_enabled"] is not None else False,
+        })
+    return result
 
 
 def set_active(user_id: int, active: bool):

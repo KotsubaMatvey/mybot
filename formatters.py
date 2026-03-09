@@ -57,26 +57,25 @@ def build_payment_message(price, expired: bool = False) -> str:
 
 def build_dashboard_message(user: dict, zone_count: int, alerts_today: int, sub_status: str) -> str:
     status   = "Active" if user["active"] else "Paused"
-    syms_str = "  ·  ".join(sorted(user["symbols"]))
-    tfs_str  = "  ·  ".join(sorted(user["timeframes"]))
+    syms_str = " | ".join(sorted(user["symbols"]))
+    tfs_str  = " | ".join(sorted(user["timeframes"]))
     return (
-        f"📡 *ICT Crypto Alerts*\n\n"
-        f"*Status:*  `{status}`\n"
-        f"*Pairs:*  `{syms_str}`\n"
-        f"*Timeframes:*  `{tfs_str}`\n"
-        f"*Subscription:*  {sub_status}\n\n"
-        f"Last scan:  `{utc_now()}`\n"
-        f"Active zones:  *{zone_count}*\n"
-        f"Alerts today:  *{alerts_today}*"
+        f"📡 ICT Crypto Alerts\n\n"
+        f"Status: {status}\n"
+        f"Pairs: {syms_str}\n"
+        f"Timeframes: {tfs_str}\n"
+        f"Subscription: {sub_status}\n\n"
+        f"Last scan: {utc_now()}\n"
+        f"Active zones: {zone_count}\n"
+        f"Alerts today: {alerts_today}"
     )
 
 
 def build_setup_summary(symbols, patterns, timeframes) -> str:
+    syms = ", ".join(sorted(symbols))
+    pats = ", ".join(sorted(patterns))
+    tfs  = ", ".join(sorted(timeframes))
     return (
-        f"✅ *Setup Complete*\n\n"
-        f"*Symbols*\n`{'  ·  '.join(sorted(symbols))}`\n\n"
-        f"*Indicators*\n`{'  ·  '.join(sorted(patterns))}`\n\n"
-        f"*Timeframes*\n`{'  ·  '.join(sorted(timeframes))}`\n\n"
-        "_Alerts will arrive automatically._\n"
-        "_Tap_ 📊 *Zones* _to see active setups now._"
+        f"Preferences set! You have chosen: {syms} — {pats} — {tfs}\n\n"
+        f"_Alerts will arrive automatically._"
     )

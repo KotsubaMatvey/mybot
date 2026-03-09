@@ -19,9 +19,9 @@ def main_menu() -> ReplyKeyboardMarkup:
 def build_toggle_keyboard(items, selected, prefix) -> InlineKeyboardMarkup:
     kb = []
     for item in items:
-        label = f"✅  {item}" if item in selected else f"◻️  {item}"
+        label = f"{item}  ✅" if item in selected else item
         kb.append([InlineKeyboardButton(label, callback_data=f"{prefix}_{item}")])
-    kb.append([InlineKeyboardButton("✔️  Confirm", callback_data=f"{prefix}_CONFIRM")])
+    kb.append([InlineKeyboardButton("Confirm", callback_data=f"{prefix}_CONFIRM")])
     return InlineKeyboardMarkup(kb)
 
 

@@ -43,9 +43,9 @@ async def send_dashboard(user_id: int, context, update=None):
     )
     text = build_dashboard_message(user, zone_count, today, sub_status)
     if update:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu())
+        await update.message.reply_text(text, reply_markup=main_menu())
     else:
-        await context.bot.send_message(user_id, text, parse_mode="Markdown", reply_markup=main_menu())
+        await context.bot.send_message(user_id, text, reply_markup=main_menu())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -66,15 +66,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await payment_flow.send_payment_screen(user_id, context, update, expired=True)
         return
 
-    await update.message.reply_text(
-        "👋 *Welcome to ICT Crypto Alerts*\n\n"
+    photo_path = "/mnt/user-data/uploads/IMG_0293.jpeg"
+    welcome_text = (
+        "📡 ICT Crypto Alerts\n\n"
         "Real-time ICT pattern scanner for Binance Futures.\n\n"
-        "*Patterns:*\n"
-        "`FVG · IFVG · OB · BOS · CHoCH`\n"
-        "`Swings · Sweeps · Volume · PD`\n\n"
-        "⚠️ _Market analysis tool. Not financial advice._",
-        parse_mode="Markdown"
+        "Patterns:\n"
+        "FVG | IFVG | OB | BOS | CHoCH\n"
+        "Swings | Sweeps | Volume\n\n"
+        "Market analysis tool. Not financial advice."
     )
+    try:
+        with open(photo_path, "rb") as photo:
+            await update.message.reply_photo(
+                photo=photo,
+                caption=welcome_text,
+            )
+    except Exception:
+        await update.message.reply_text(welcome_text)
     await payment_flow.send_payment_screen(user_id, context, update)
 
 

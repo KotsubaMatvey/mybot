@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from telegram.ext import Application
 
 from scanner import run_scanner, get_active_zones
-from database import get_all_active_users, is_subscribed, get_user
+from database import get_all_active_users
 from formatters import build_alert_message, utc_now
 from visuals    import generate_chart
 from config import SCAN_INTERVAL, DIGEST_INTERVAL, TIMEFRAMES
@@ -50,9 +50,8 @@ async def scanner_loop(application: Application):
                 grouped_meta.setdefault(key, []).append(a)
 
             for user in users:
-                uid = user["user_id"]
-                if not is_subscribed(uid):
-                    continue
+                uid         = user["user_id"]
+                auto_charts = user.get("charts_enabled", False)
 
                 for (symbol, tf), meta_list in grouped_meta.items():
                     if symbol not in user["symbols"] or tf not in user["timeframes"]:
@@ -63,8 +62,6 @@ async def scanner_loop(application: Application):
                     try:
                         msg     = build_alert_message(symbol, tf, filtered)
                         candles = all_candles.get((symbol, tf), [])
-                        user_db = get_user(uid)
-                        auto_charts = user_db.get("charts_enabled", False) if user_db else False
 
                         if auto_charts and candles:
                             # Send chart with caption
@@ -118,8 +115,6 @@ async def _send_digest(application: Application, users: list):
         return
     for user in users:
         uid = user["user_id"]
-        if not is_subscribed(uid):
-            continue
         lines = [f"📋 *Hourly Digest  ·  {utc_now()}*"]
         has   = False
         for symbol in sorted(user["symbols"]):

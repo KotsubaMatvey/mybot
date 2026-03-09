@@ -460,7 +460,14 @@ async def run_scanner() -> tuple[list, list, dict]:
                         "pattern":   pname,
                         "detail":    p["detail"],
                         "direction": p.get("direction", ""),
-                        "score":     None,  # filled below
+                        "score":     None,
+                        # price level fields for chart rendering
+                        "gap_low":   p.get("gap_low"),
+                        "gap_high":  p.get("gap_high"),
+                        "ob_low":    p.get("ob_low"),
+                        "ob_high":   p.get("ob_high"),
+                        "level":     p.get("level"),
+                        "time":      p.get("time", 0),
                     })
         if tf_patterns:
             by_symbol[symbol][tf] = tf_patterns

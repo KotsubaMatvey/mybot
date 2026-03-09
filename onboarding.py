@@ -32,31 +32,31 @@ def clear(user_id: int):
 async def send_step_symbols(chat_id, context, msg=None):
     sel  = _state.get(chat_id, {}).get("symbols", set())
     kb   = build_toggle_keyboard(SYMBOLS, sel, "sym")
-    text = "*Step 1 of 3 — Symbols*\n\nSelect the pairs you want to track:"
+    text = "Select symbols:"
     if msg:
-        await msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await msg.edit_text(text, reply_markup=kb)
     else:
-        await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+        await context.bot.send_message(chat_id, text, reply_markup=kb)
 
 
 async def send_step_indicators(chat_id, context, msg=None):
     sel  = _state.get(chat_id, {}).get("patterns", set())
     kb   = build_toggle_keyboard(ALL_PATTERNS, sel, "pat")
-    text = "*Step 2 of 3 — Indicators*\n\nSelect which patterns to detect:"
+    text = "Select indicators:"
     if msg:
-        await msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await msg.edit_text(text, reply_markup=kb)
     else:
-        await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+        await context.bot.send_message(chat_id, text, reply_markup=kb)
 
 
 async def send_step_timeframes(chat_id, context, msg=None):
     sel  = _state.get(chat_id, {}).get("timeframes", set())
     kb   = build_toggle_keyboard(TIMEFRAMES, sel, "tf")
-    text = "*Step 3 of 3 — Timeframes*\n\nSelect timeframes:\n_Tip: 15m + 1h + 4h covers most ICT setups_"
+    text = "Select timeframes:"
     if msg:
-        await msg.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+        await msg.edit_text(text, reply_markup=kb)
     else:
-        await context.bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=kb)
+        await context.bot.send_message(chat_id, text, reply_markup=kb)
 
 
 async def handle_callback(user_id: int, data: str, query, context) -> bool:
@@ -75,7 +75,8 @@ async def handle_callback(user_id: int, data: str, query, context) -> bool:
             if not ob["symbols"]:
                 await query.answer("Select at least one symbol!", show_alert=True)
             else:
-                await send_step_indicators(user_id, context, msg=query.message)
+                await query.answer()
+                await send_step_indicators(user_id, context)
         else:
             ob["symbols"].discard(item) if item in ob["symbols"] else ob["symbols"].add(item)
             await query.edit_message_reply_markup(
@@ -89,7 +90,8 @@ async def handle_callback(user_id: int, data: str, query, context) -> bool:
             if not ob["patterns"]:
                 await query.answer("Select at least one indicator!", show_alert=True)
             else:
-                await send_step_timeframes(user_id, context, msg=query.message)
+                await query.answer()
+                await send_step_timeframes(user_id, context)
         else:
             ob["patterns"].discard(item) if item in ob["patterns"] else ob["patterns"].add(item)
             await query.edit_message_reply_markup(
@@ -104,10 +106,9 @@ async def handle_callback(user_id: int, data: str, query, context) -> bool:
                 await query.answer("Select at least one timeframe!", show_alert=True)
             else:
                 save_preferences(user_id, ob["symbols"], ob["patterns"], ob["timeframes"])
-                await query.edit_message_text(
-                    build_setup_summary(ob["symbols"], ob["patterns"], ob["timeframes"]),
-                    parse_mode="Markdown"
-                )
+                summary = build_setup_summary(ob["symbols"], ob["patterns"], ob["timeframes"])
+                await query.answer()
+                await context.bot.send_message(user_id, summary, parse_mode="Markdown")
                 clear(user_id)
         else:
             ob["timeframes"].discard(item) if item in ob["timeframes"] else ob["timeframes"].add(item)

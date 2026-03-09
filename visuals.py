@@ -2,180 +2,240 @@
 visuals.py — chart generation for ICT pattern alerts.
 
 Dependencies: mplfinance, pandas, matplotlib
-Install: pip install mplfinance pandas
+Install: pip install mplfinance pandas matplotlib
 
-Design decisions:
-  - matplotlib backend set to Agg at import time (no display needed on VPS)
-  - charts rendered to io.BytesIO — never touch disk
-  - plt.close(fig) after each render — no memory leak
-  - generation always via asyncio.to_thread — never blocks event loop
-  - candle count scaled by timeframe, not fixed number
+Style: light, minimal — TradingView-like.
+Patterns rendered as zones/lines directly on chart.
 """
 import io
 import asyncio
 import logging
-from datetime import timezone, datetime
 
 logger = logging.getLogger(__name__)
 
-# Must be set before any other matplotlib import
 import matplotlib
 matplotlib.use("Agg")
 
-import matplotlib.pyplot    as plt
-import matplotlib.patches   as mpatches
-import matplotlib.ticker    as mticker
-import pandas               as pd
-import mplfinance           as mpf
+import matplotlib.pyplot   as plt
+import matplotlib.patches  as patches
+import pandas              as pd
+import mplfinance          as mpf
+from datetime import datetime, timezone
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  CONSTANTS
+#  STYLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-# How many candles to show per timeframe — enough context, not a hairball
-_CANDLE_COUNT = {
-    "1m":  80,
-    "3m":  80,
-    "5m":  72,   # ~6h
-    "15m": 64,   # ~16h
-    "30m": 56,   # ~28h
-    "1h":  48,   # 2 days
-    "4h":  42,   # 7 days
-    "1d":  30,   # 1 month
-}
-_DEFAULT_CANDLES = 60
-
-_DARK_STYLE = mpf.make_mpf_style(
-    base_mpf_style="nightclouds",
-    gridstyle="dotted",
-    gridcolor="#2a2a2a",
-    facecolor="#0f0f0f",
-    figcolor="#0f0f0f",
-    edgecolor="#333333",
+_STYLE = mpf.make_mpf_style(
+    base_mpf_style="default",
     marketcolors=mpf.make_marketcolors(
-        up="#26a69a",   down="#ef5350",
-        wick={"up": "#26a69a", "down": "#ef5350"},
-        edge={"up": "#26a69a", "down": "#ef5350"},
-        volume={"up": "#1a5c58", "down": "#7a2020"},
+        up="#26a69a",    down="#1a1a1a",
+        wick={"up": "#26a69a", "down": "#1a1a1a"},
+        edge={"up": "#26a69a", "down": "#1a1a1a"},
+        volume={"up": "#b2dfdb", "down": "#bdbdbd"},
     ),
+    gridstyle="dotted",
+    gridcolor="#cccccc",
+    facecolor="#f0f0f0",
+    figcolor="#f0f0f0",
+    edgecolor="#cccccc",
     rc={
-        "axes.labelcolor":  "#888888",
-        "xtick.color":      "#666666",
-        "ytick.color":      "#666666",
-        "axes.titlecolor":  "#cccccc",
-        "font.size":        9,
+        "axes.labelcolor":   "#888888",
+        "xtick.color":       "#aaaaaa",
+        "ytick.color":       "#888888",
+        "ytick.labelsize":   8,
+        "xtick.labelsize":   7,
+        "axes.spines.top":   False,
+        "axes.spines.left":  False,
+        "font.family":       "monospace",
     },
 )
 
-# Pattern type → zone colour
-_ZONE_COLORS = {
-    "OB":    ("#ff9800", 0.25),   # orange
-    "FVG":   ("#2196f3", 0.20),   # blue
-    "IFVG":  ("#9c27b0", 0.20),   # purple
-    "CHoCH": ("#f44336", 0.00),   # red  (line only)
-    "BOS":   ("#4caf50", 0.00),   # green (line only)
+# Pattern → (fill_color, line_color, alpha)
+_ZONE_STYLE = {
+    "FVG":   ("#2196f3", "#1565c0", 0.12),
+    "IFVG":  ("#9c27b0", "#6a1b9a", 0.12),
+    "OB":    ("#ff9800", "#e65100", 0.15),
+    "CHoCH": ("#f44336", "#b71c1c", 0.00),
+    "BOS":   ("#26a69a", "#00695c", 0.00),
+    "Swings":("#607d8b", "#37474f", 0.00),
+    "Sweeps":("#ff5722", "#bf360c", 0.00),
 }
-_DEFAULT_ZONE_COLOR = ("#607d8b", 0.20)
+_DEFAULT_ZONE_STYLE = ("#607d8b", "#37474f", 0.10)
+
+# Candles to show per timeframe
+_CANDLE_COUNT = {
+    "1m": 80, "3m": 80, "5m": 72, "15m": 64,
+    "30m": 56, "1h": 48, "4h": 42, "1d": 30,
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  DATA PREP
+#  DATA
 # ══════════════════════════════════════════════════════════════════════════════
 
-def candles_to_df(candles: list, timeframe: str) -> pd.DataFrame:
-    """
-    Convert scanner candle list to mplfinance-compatible DataFrame.
-    candles: list of dicts with keys time, open, high, low, close, volume
-    """
-    n   = _CANDLE_COUNT.get(timeframe, _DEFAULT_CANDLES)
+def _to_df(candles: list, timeframe: str) -> pd.DataFrame:
+    n   = _CANDLE_COUNT.get(timeframe, 60)
     raw = candles[-n:]
-
-    df = pd.DataFrame(raw)
+    df  = pd.DataFrame(raw)
     df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
     df = df.set_index("time")
     df.columns = [c.capitalize() for c in df.columns]
-    df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
-    return df
+    return df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ZONE OVERLAYS
+#  ZONE RENDERING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _add_zones(ax, patterns_meta: list, df: pd.DataFrame):
+def _draw_zones(ax, patterns: list, df: pd.DataFrame):
     """
-    Draw zone overlays on the price axis based on detected patterns.
-    Reads alert dicts from scanner — fields: gap_low/gap_high, ob_low/ob_high, level.
+    Draw ICT zones on the price axis.
+    Zones (FVG, IFVG, OB): semi-transparent fill + dashed border lines.
+    Levels (BOS, CHoCH, Swings, Sweeps): solid horizontal line + label.
     """
-    for p in patterns_meta:
-        ptype        = p.get("pattern", "")
-        color, alpha = _ZONE_COLORS.get(ptype, _DEFAULT_ZONE_COLOR)
+    n = len(df)
 
-        # Resolve high/low depending on pattern type
+    for p in patterns:
+        ptype                    = p.get("pattern", "")
+        fill_c, line_c, alpha    = _ZONE_STYLE.get(ptype, _DEFAULT_ZONE_STYLE)
+        direction                = p.get("direction", "")
+
+        # ── Resolve price levels
         if ptype in ("FVG", "IFVG"):
             hi = p.get("gap_high")
             lo = p.get("gap_low")
-        elif ptype in ("OB",):
+        elif ptype == "OB":
             hi = p.get("ob_high")
             lo = p.get("ob_low")
         else:
-            # BOS, CHoCH, Swings, Sweeps — single level
             hi = p.get("level")
             lo = None
 
         if hi is None:
             continue
 
-        if lo is not None and lo != hi and alpha > 0:
-            ax.axhspan(lo, hi, color=color, alpha=alpha, zorder=1)
-            ax.axhline(hi, color=color, linewidth=0.8, linestyle="--", alpha=0.7, zorder=2)
-            ax.axhline(lo, color=color, linewidth=0.8, linestyle="--", alpha=0.7, zorder=2)
+        # ── Zone (two levels)
+        if lo is not None and abs(hi - lo) > 0 and alpha > 0:
+            ax.axhspan(lo, hi, color=fill_c, alpha=alpha, zorder=1, linewidth=0)
+            ax.axhline(hi, color=line_c, linewidth=0.8,
+                       linestyle="--", alpha=0.6, zorder=2)
+            ax.axhline(lo, color=line_c, linewidth=0.8,
+                       linestyle="--", alpha=0.6, zorder=2)
+            # Label box at right edge
+            mid = (hi + lo) / 2
+            ax.annotate(
+                f" {ptype} ",
+                xy=(n - 1, mid),
+                fontsize=6.5,
+                color="white",
+                backgroundcolor=line_c,
+                ha="right",
+                va="center",
+                zorder=5,
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    facecolor=line_c,
+                    edgecolor="none",
+                    alpha=0.85,
+                ),
+            )
+
+        # ── Level (single line)
         else:
-            ax.axhline(hi, color=color, linewidth=1.0, linestyle="-", alpha=0.8, zorder=2)
-
-        # Label
-        ax.annotate(
-            ptype,
-            xy=(len(df) - 0.5, hi),
-            fontsize=7, color=color, alpha=0.9,
-            ha="right", va="bottom",
-        )
+            label = f"{ptype} {'↑' if 'Bull' in direction else '↓' if 'Bear' in direction else ''}"
+            ax.axhline(hi, color=line_c, linewidth=1.0,
+                       linestyle="-", alpha=0.75, zorder=2)
+            ax.annotate(
+                f" {label.strip()} ",
+                xy=(n - 1, hi),
+                fontsize=6.5,
+                color=line_c,
+                ha="right",
+                va="bottom",
+                zorder=5,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SYNC RENDER  (runs in thread)
+#  PRICE LABEL  (current price box on right axis — like TradingView)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _render(df: pd.DataFrame, patterns_meta: list,
-            symbol: str, timeframe: str) -> io.BytesIO:
-    """
-    Synchronous render — must be called via asyncio.to_thread.
-    Returns PNG bytes in a BytesIO buffer.
-    """
-    title = f"{symbol}  ·  {timeframe}"
+def _draw_price_label(ax, df: pd.DataFrame):
+    last_close = df["Close"].iloc[-1]
+    last_time  = df.index[-1]
+    is_up      = df["Close"].iloc[-1] >= df["Open"].iloc[-1]
+    bg_color   = "#26a69a" if is_up else "#ef5350"
+
+    ax.annotate(
+        f" {last_close:,.1f} ",
+        xy=(len(df) - 0.5, last_close),
+        fontsize=8,
+        fontweight="bold",
+        color="white",
+        ha="left",
+        va="center",
+        zorder=10,
+        annotation_clip=False,
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor=bg_color,
+            edgecolor="none",
+        ),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SYNC RENDER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _render(df: pd.DataFrame, patterns: list, symbol: str, timeframe: str) -> io.BytesIO:
     fig, axlist = mpf.plot(
         df,
         type="candle",
-        style=_DARK_STYLE,
-        title=f"\n{title}",
+        style=_STYLE,
+        title="",
         ylabel="",
         volume=True,
         volume_panel=1,
-        panel_ratios=(4, 1),
+        panel_ratios=(5, 1),
         returnfig=True,
-        figsize=(10, 6),
+        figsize=(10, 5.5),
         tight_layout=True,
+        xrotation=0,
+        datetime_format="%H:%M",
+        scale_padding={"left": 0.1, "right": 1.2, "top": 0.3, "bottom": 0.5},
     )
 
     ax = axlist[0]
-    _add_zones(ax, patterns_meta, df)
+
+    # Draw pattern zones
+    if patterns:
+        _draw_zones(ax, patterns, df)
+
+    # Current price label
+    _draw_price_label(ax, df)
+
+    # Clean title: symbol · tf top-left
+    ax.set_title(
+        f"{symbol}  ·  {timeframe}",
+        loc="left",
+        fontsize=10,
+        color="#444444",
+        pad=8,
+        fontfamily="monospace",
+    )
+
+    # Remove y-axis label clutter
+    ax.set_ylabel("")
+    axlist[2].set_ylabel("")   # volume panel
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight",
                 facecolor=fig.get_facecolor())
     buf.seek(0)
-    plt.close(fig)   # release memory — clf() is NOT enough
+    plt.close(fig)
     return buf
 
 
@@ -183,19 +243,13 @@ def _render(df: pd.DataFrame, patterns_meta: list,
 #  PUBLIC API
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def generate_chart(candles: list, patterns_meta: list,
+async def generate_chart(candles: list, patterns: list,
                          symbol: str, timeframe: str) -> io.BytesIO | None:
-    """
-    Async entry point. Offloads matplotlib work to a thread.
-    Returns BytesIO PNG or None on failure.
-    patterns_meta: list of pattern dicts from scanner
-                   (needs zone_high / zone_low / level fields for overlays)
-    """
     if not candles:
         return None
     try:
-        df  = candles_to_df(candles, timeframe)
-        buf = await asyncio.to_thread(_render, df, patterns_meta, symbol, timeframe)
+        df  = _to_df(candles, timeframe)
+        buf = await asyncio.to_thread(_render, df, patterns, symbol, timeframe)
         return buf
     except Exception as e:
         logger.error(f"generate_chart {symbol} {timeframe}: {e}")
