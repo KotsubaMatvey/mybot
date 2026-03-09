@@ -9,7 +9,7 @@ from scanner import ALL_PATTERNS
 def main_menu() -> ReplyKeyboardMarkup:
     kb = [
         [KeyboardButton("📊 Zones"),    KeyboardButton("ℹ️ Status")],
-        [KeyboardButton("⚙️ Settings"), KeyboardButton("🕐 Sessions")],
+        [KeyboardButton("⚙️ Settings"), KeyboardButton("🕐 Sessions"), KeyboardButton("📊 Charts")],
         [KeyboardButton("⏸ Stop"),      KeyboardButton("▶️ Resume")],
         [KeyboardButton("❓ Help")],
     ]

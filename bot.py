@@ -15,6 +15,7 @@ from handlers import (
     start, reset, stop_cmd, resume_cmd,
     status_cmd, zones_cmd, help_cmd,
     sessions_cmd, session_status_cmd,
+    charts_cmd, chart_cmd, handle_chart_callback,
     callback_handler, menu_button_handler
 )
 from payment_flow import pay_cmd

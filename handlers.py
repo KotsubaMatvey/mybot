@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from database import (
     get_user, upsert_user, set_active,
     is_subscribed, get_subscription_status, set_owner,
-    toggle_sessions_alerts
+    toggle_sessions_alerts, toggle_charts
 )
 from scanner import get_active_zones
 from keyboards import main_menu, confirm_stop_keyboard
@@ -17,6 +17,8 @@ from formatters import build_dashboard_message, utc_now
 from alerts import signals_today
 from config import SYMBOLS, TIMEFRAMES, OWNER_IDS
 from sessions import get_current_session_message
+from visuals  import generate_chart
+from scanner  import get_cached_candles, get_cached_patterns
 import onboarding
 import payment_flow
 
@@ -181,6 +183,103 @@ async def session_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(current, parse_mode="Markdown")
 
 
+async def charts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle auto chart generation via menu button."""
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await payment_flow.send_payment_screen(user_id, context, update)
+        return
+    new_state = toggle_charts(user_id)
+    state_str = "ON 🟢" if new_state else "OFF 🔴"
+    hint = "Chart sent with every alert" if new_state else "Tap 📈 Chart under any alert to view"
+    await update.message.reply_text(
+        f"📈 *Auto Charts:*  `{state_str}`\n\n_{hint}_",
+        parse_mode="Markdown",
+    )
+
+
+async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/chart BTCUSDT 1h — generate chart on demand."""
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await payment_flow.send_payment_screen(user_id, context, update)
+        return
+
+    args = context.args
+    if not args or len(args) < 2:
+        await update.message.reply_text("Usage: `/chart BTCUSDT 1h`", parse_mode="Markdown")
+        return
+
+    symbol  = args[0].upper()
+    if not symbol.endswith("USDT"):
+        symbol += "USDT"
+    tf      = args[1].lower()
+    candles = get_cached_candles(symbol, tf)
+
+    if not candles:
+        await update.message.reply_text(
+            f"No data for `{symbol} {tf}` yet — wait for the next scan.",
+            parse_mode="Markdown",
+        )
+        return
+
+    msg = await update.message.reply_text("⏳ Generating chart…")
+    try:
+        patterns = get_cached_patterns(symbol, tf)
+        chart = await generate_chart(candles, patterns, symbol, tf)
+        if not chart:
+            await msg.edit_text("Chart generation failed.")
+            return
+        await msg.delete()
+        caption = f"`{symbol}  ·  {tf}`"
+        if patterns:
+            caption += "\n" + "\n".join(f"  ▪ {p['detail']}" for p in patterns)
+        await update.message.reply_photo(photo=chart, caption=caption, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"chart_cmd {symbol} {tf}: {e}")
+        await msg.edit_text("Error generating chart.")
+
+
+async def handle_chart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles 📈 Chart inline button under alerts."""
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split("_", 2)
+    if len(parts) != 3:
+        return
+    _, symbol, tf = parts
+
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    candles = get_cached_candles(symbol, tf)
+    if not candles:
+        await query.message.reply_text(
+            f"No cached data for `{symbol} {tf}` — wait for next scan.",
+            parse_mode="Markdown",
+        )
+        return
+
+    loading = await query.message.reply_text("⏳ Generating chart…")
+    try:
+        patterns = get_cached_patterns(symbol, tf)
+        chart = await generate_chart(candles, patterns, symbol, tf)
+        if not chart:
+            await loading.edit_text("Chart generation failed.")
+            return
+        await loading.delete()
+        caption = f"`{symbol}  ·  {tf}`"
+        if patterns:
+            caption += "\n" + "\n".join(f"  ▪ {p['detail']}" for p in patterns)
+        await query.message.reply_photo(photo=chart, caption=caption, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"chart callback {symbol} {tf}: {e}")
+        await loading.edit_text("Error generating chart.")
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "❓ *ICT Crypto Alerts — Help*\n\n"
@@ -226,6 +325,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Chart button
+    if data.startswith("chart_"):
+        await handle_chart_callback(update, context)
+        return
+
     # Delegate to payment flow
     if await payment_flow.handle_callback(user_id, data, query, context):
         return
@@ -256,6 +360,7 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         "⏸ Stop":       stop_cmd,
         "▶️ Resume":    resume_cmd,
         "🕐 Sessions":  sessions_cmd,
+        "📊 Charts":    charts_cmd,
     }
     handler = dispatch.get(text)
     if handler:

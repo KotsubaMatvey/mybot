@@ -8,12 +8,25 @@ from datetime import datetime, timezone
 from telegram.ext import Application
 
 from scanner import run_scanner, get_active_zones
-from database import get_all_active_users, is_subscribed
+from database import get_all_active_users, is_subscribed, get_user
 from formatters import build_alert_message, utc_now
+from visuals    import generate_chart
 from config import SCAN_INTERVAL, DIGEST_INTERVAL, TIMEFRAMES
 from health import record_scan, record_alert, record_error
 
 logger = logging.getLogger(__name__)
+
+def _chart_button(symbol: str, tf: str):
+    """Inline button under every alert to request chart on demand."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "📈 Chart",
+            callback_data=f"chart_{symbol}_{tf}",
+        )
+    ]])
+
+
 
 # Shared state — imported by bot.py for /status command
 signals_today: dict = {}
@@ -48,8 +61,36 @@ async def scanner_loop(application: Application):
                     if not filtered:
                         continue
                     try:
-                        msg = build_alert_message(symbol, tf, filtered)
-                        await application.bot.send_message(uid, msg, parse_mode="Markdown")
+                        msg     = build_alert_message(symbol, tf, filtered)
+                        candles = all_candles.get((symbol, tf), [])
+                        user_db = get_user(uid)
+                        auto_charts = user_db.get("charts_enabled", False) if user_db else False
+
+                        if auto_charts and candles:
+                            # Send chart with caption
+                            chart = await generate_chart(candles, filtered, symbol, tf)
+                            if chart:
+                                from telegram import InputFile
+                                await application.bot.send_photo(
+                                    uid,
+                                    photo=chart,
+                                    caption=msg,
+                                    parse_mode="Markdown",
+                                    reply_markup=_chart_button(symbol, tf),
+                                )
+                            else:
+                                # Chart failed — fallback to text + button
+                                await application.bot.send_message(
+                                    uid, msg, parse_mode="Markdown",
+                                    reply_markup=_chart_button(symbol, tf),
+                                )
+                        else:
+                            # Text alert + inline button to request chart
+                            await application.bot.send_message(
+                                uid, msg, parse_mode="Markdown",
+                                reply_markup=_chart_button(symbol, tf),
+                            )
+
                         signals_today[uid] = signals_today.get(uid, 0) + 1
                         record_alert()
                     except Exception as e:

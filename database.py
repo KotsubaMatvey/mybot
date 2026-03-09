@@ -29,7 +29,8 @@ def init_db():
                 expires_at  TEXT DEFAULT NULL,
                 invoice_id  INTEGER DEFAULT NULL,
                 is_owner         INTEGER DEFAULT 0,
-                sessions_alerts  INTEGER DEFAULT 0
+                sessions_alerts  INTEGER DEFAULT 0,
+                charts_enabled   INTEGER DEFAULT 0
             )
         """)
         # Migrations
@@ -38,7 +39,8 @@ def init_db():
             ("expires_at",  "TEXT DEFAULT NULL"),
             ("invoice_id",  "INTEGER DEFAULT NULL"),
             ("is_owner",    "INTEGER DEFAULT 0"),
-            ("sessions_alerts", "INTEGER DEFAULT 0"),
+            ("sessions_alerts",  "INTEGER DEFAULT 0"),
+            ("charts_enabled",  "INTEGER DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
@@ -77,6 +79,7 @@ def get_user(user_id: int) -> dict | None:
             "invoice_id": row["invoice_id"],
             "is_owner":         bool(row["is_owner"]) if row["is_owner"] is not None else False,
             "sessions_alerts":   bool(row["sessions_alerts"]) if row["sessions_alerts"] is not None else False,
+            "charts_enabled":    bool(row["charts_enabled"])  if row["charts_enabled"]  is not None else False,
         }
 
 
@@ -176,4 +179,12 @@ def toggle_sessions_alerts(user_id: int) -> bool:
     user = get_user(user_id)
     new_val = not user.get("sessions_alerts", False) if user else True
     upsert_user(user_id, sessions_alerts=int(new_val))
+    return new_val
+
+
+def toggle_charts(user_id: int) -> bool:
+    """Toggle auto chart generation. Returns new state."""
+    user    = get_user(user_id)
+    new_val = not user.get("charts_enabled", False) if user else True
+    upsert_user(user_id, charts_enabled=int(new_val))
     return new_val

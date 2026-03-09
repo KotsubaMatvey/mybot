@@ -9,6 +9,20 @@ import aiohttp
 from datetime import datetime, timezone
 from config import SYMBOLS, TIMEFRAMES, CANDLE_LIMIT
 
+# Module-level candle cache — updated every scan, read by chart requests
+_candle_cache: dict = {}  # {(symbol, tf): [candle, ...]}
+_pattern_cache: dict = {}  # {(symbol, tf): [alert_dict, ...]}
+
+
+def get_cached_candles(symbol: str, tf: str) -> list:
+    """Return last known candles for symbol+tf. Empty list if not yet scanned."""
+    return _candle_cache.get((symbol, tf), [])
+
+
+def get_cached_patterns(symbol: str, tf: str) -> list:
+    """Return last known detected patterns for symbol+tf. Empty list if none."""
+    return _pattern_cache.get((symbol, tf), [])
+
 BINANCE_BASE = "https://fapi.binance.com"
 ALL_PATTERNS = ["FVG", "IFVG", "OB", "BOS", "CHoCH", "Swings", "Sweeps", "Volume", "PD"]
 
@@ -414,6 +428,7 @@ async def run_scanner() -> tuple[list, list, dict]:
     for (symbol, tf), candles in zip(combos, results):
         if not isinstance(candles, Exception) and candles:
             all_candles[(symbol, tf)] = candles
+            _candle_cache[(symbol, tf)] = candles
 
     # ── 2. Run all detectors ONCE per (symbol, tf) — cache results
     # detection_cache: {(symbol, tf): {pname: [pattern_dict, ...]}}
@@ -471,6 +486,12 @@ async def run_scanner() -> tuple[list, list, dict]:
         if len(tf_data) >= 2:
             for msg in check_confluence(symbol, tf_data):
                 all_confluences.append({"symbol": symbol, "message": msg})
+
+    # Update pattern cache
+    _pattern_cache.clear()
+    for a in all_alerts:
+        key = (a["symbol"], a["timeframe"])
+        _pattern_cache.setdefault(key, []).append(a)
 
     return all_alerts, all_confluences, all_candles
 
