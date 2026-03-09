@@ -28,7 +28,8 @@ def init_db():
                 confluence  INTEGER DEFAULT 1,
                 expires_at  TEXT DEFAULT NULL,
                 invoice_id  INTEGER DEFAULT NULL,
-                is_owner    INTEGER DEFAULT 0
+                is_owner         INTEGER DEFAULT 0,
+                sessions_alerts  INTEGER DEFAULT 0
             )
         """)
         # Migrations
@@ -37,6 +38,7 @@ def init_db():
             ("expires_at",  "TEXT DEFAULT NULL"),
             ("invoice_id",  "INTEGER DEFAULT NULL"),
             ("is_owner",    "INTEGER DEFAULT 0"),
+            ("sessions_alerts", "INTEGER DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
@@ -73,7 +75,8 @@ def get_user(user_id: int) -> dict | None:
             "confluence": bool(row["confluence"]) if row["confluence"] is not None else True,
             "expires_at": row["expires_at"],
             "invoice_id": row["invoice_id"],
-            "is_owner":   bool(row["is_owner"]) if row["is_owner"] is not None else False,
+            "is_owner":         bool(row["is_owner"]) if row["is_owner"] is not None else False,
+            "sessions_alerts":   bool(row["sessions_alerts"]) if row["sessions_alerts"] is not None else False,
         }
 
 
@@ -157,3 +160,20 @@ def get_subscription_status(user_id: int) -> str:
         return f"✅ Active — {days_left} days remaining"
     except Exception:
         return "Unknown"
+
+
+def get_session_alert_users() -> list[int]:
+    """Return user_ids of all active subscribed users with sessions_alerts enabled."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM users WHERE active=1 AND setup_done=1 AND sessions_alerts=1"
+        ).fetchall()
+    return [r["user_id"] for r in rows]
+
+
+def toggle_sessions_alerts(user_id: int) -> bool:
+    """Toggle sessions_alerts for user. Returns new state."""
+    user = get_user(user_id)
+    new_val = not user.get("sessions_alerts", False) if user else True
+    upsert_user(user_id, sessions_alerts=int(new_val))
+    return new_val

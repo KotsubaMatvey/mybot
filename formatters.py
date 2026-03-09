@@ -8,11 +8,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%H:%M UTC")
 
 
-def score_label(score: int) -> str:
-    stars  = "★" * score + "☆" * (5 - score)
-    labels = {0: "", 1: "Weak", 2: "Moderate", 3: "Good", 4: "Strong", 5: "Excellent"}
-    label  = labels.get(score, "")
-    return f"{stars}  {label}".strip() if label else stars
+def fmt_price(p: float) -> str:
+    """
+    Adaptive price formatting:
+      >= 1000  → 1 decimal  (66445.1)
+      >= 1     → 2 decimals (1.85)
+      < 1      → 4 decimals (0.0023)
+    """
+    if p >= 1000:
+        return f"{p:,.1f}"
+    if p >= 1:
+        return f"{p:.2f}"
+    return f"{p:.4f}"
 
 
 def pattern_hint(ptype: str, direction: str) -> str:
@@ -38,17 +45,19 @@ def pattern_hint(ptype: str, direction: str) -> str:
     return hints.get((ptype, direction), "")
 
 
-def build_alert_message(symbol: str, timeframe: str, patterns_meta: list, score: int = 0) -> str:
-    rating = score_label(score)
-    lines  = [
+def build_alert_message(symbol: str, timeframe: str, patterns_meta: list) -> str:
+    """
+    ICT pattern alert — tool format, no rating.
+    Shows what was detected and where, nothing more.
+    """
+    lines = [
         f"*{symbol}  ·  {timeframe}*",
-        f"_{rating}_",
         "",
     ]
     for p in patterns_meta:
         detail = p.get("detail", "")
         hint   = pattern_hint(p.get("pattern", ""), p.get("direction", ""))
-        lines.append(f"*{detail}*")
+        lines.append(f"`{detail}`")
         if hint:
             lines.append(f"_{hint}_")
         lines.append("")
@@ -64,17 +73,15 @@ def build_payment_message(price, expired: bool = False) -> str:
         f"*Price:*  `${price}` / month\n"
         f"_Pay in any crypto — USDT · TON · BTC · ETH_\n\n"
         f"*Includes:*\n"
-        f"▪ Real-time ICT pattern alerts\n"
+        f"▪ Real-time ICT pattern detection\n"
         f"▪ FVG · IFVG · OB · BOS · CHoCH · Swings\n"
-        f"▪ Signal quality rating ★★★★★\n"
-        f"▪ Market interpretations\n\n"
+        f"▪ Multi-timeframe zone tracking\n"
         f"_After payment tap_ ✅ *Check Payment* _below._"
     )
 
 
-def build_dashboard_message(user: dict, zone_count: int, signals_today: int, sub_status: str) -> str:
+def build_dashboard_message(user: dict, zone_count: int, alerts_today: int, sub_status: str) -> str:
     status   = "Active" if user["active"] else "Paused"
-    conf     = "ON" if user.get("confluence", True) else "OFF"
     syms_str = "  ·  ".join(sorted(user["symbols"]))
     tfs_str  = "  ·  ".join(sorted(user["timeframes"]))
     return (
@@ -82,11 +89,10 @@ def build_dashboard_message(user: dict, zone_count: int, signals_today: int, sub
         f"*Status:*  `{status}`\n"
         f"*Pairs:*  `{syms_str}`\n"
         f"*Timeframes:*  `{tfs_str}`\n"
-        f"*Confluence:*  `{conf}`\n"
         f"*Subscription:*  {sub_status}\n\n"
         f"Last scan:  `{utc_now()}`\n"
         f"Active zones:  *{zone_count}*\n"
-        f"Signals today:  *{signals_today}*"
+        f"Alerts today:  *{alerts_today}*"
     )
 
 

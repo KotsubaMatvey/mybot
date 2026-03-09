@@ -9,8 +9,7 @@ from telegram.ext import Application
 
 from scanner import run_scanner, get_active_zones
 from database import get_all_active_users, is_subscribed
-from interpret import pattern_to_interpretation
-from formatters import build_alert_message, utc_now, score_label
+from formatters import build_alert_message, utc_now
 from config import SCAN_INTERVAL, DIGEST_INTERVAL, TIMEFRAMES
 from health import record_scan, record_alert, record_error
 
@@ -26,18 +25,16 @@ async def scanner_loop(application: Application):
 
     while True:
         try:
-            alerts, confluences, all_candles = await run_scanner()
+            alerts, _, all_candles = await run_scanner()
             record_scan()
             users = get_all_active_users()
             now   = asyncio.get_event_loop().time()
 
             # Group alerts by (symbol, tf)
             grouped_meta: dict = {}
-            scores: dict       = {}
             for a in alerts:
                 key = (a["symbol"], a["timeframe"])
                 grouped_meta.setdefault(key, []).append(a)
-                scores[key] = a.get("score", 0)
 
             for user in users:
                 uid = user["user_id"]
@@ -50,9 +47,8 @@ async def scanner_loop(application: Application):
                     filtered = [m for m in meta_list if m["pattern"] in user["patterns"]]
                     if not filtered:
                         continue
-                    score = scores.get((symbol, tf), 0)
                     try:
-                        msg = build_alert_message(symbol, tf, filtered, score)
+                        msg = build_alert_message(symbol, tf, filtered)
                         await application.bot.send_message(uid, msg, parse_mode="Markdown")
                         signals_today[uid] = signals_today.get(uid, 0) + 1
                         record_alert()
@@ -60,25 +56,6 @@ async def scanner_loop(application: Application):
                         logger.error(f"Alert send error {uid}: {e}")
                         record_error()
 
-                # Interpretations (confluence)
-                if user.get("confluence", True):
-                    sent_interp = set()
-                    for (symbol, tf), meta_list in grouped_meta.items():
-                        if symbol not in user["symbols"] or tf not in user["timeframes"]:
-                            continue
-                        if (symbol, tf) in sent_interp:
-                            continue
-                        filtered = [m for m in meta_list if m["pattern"] in user["patterns"]]
-                        if not filtered:
-                            continue
-                        candles = all_candles.get((symbol, tf), [])
-                        interp  = pattern_to_interpretation(filtered, candles, symbol, tf)
-                        if interp:
-                            try:
-                                await application.bot.send_message(uid, interp, parse_mode="Markdown")
-                                sent_interp.add((symbol, tf))
-                            except Exception as e:
-                                logger.error(f"Interp send error {uid}: {e}")
 
             # Hourly digest
             if now - last_digest >= DIGEST_INTERVAL:

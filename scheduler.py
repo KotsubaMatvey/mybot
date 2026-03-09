@@ -176,6 +176,8 @@ async def post_init(application: Application):
     # 3. Import here to avoid circular imports at module level
     from alerts import scanner_loop
     from classic_scanner import channel_scheduler
+    from sessions import session_scheduler
+    from database import get_session_alert_users
 
     # 4. Spawn managed tasks
     _spawn("scanner",       lambda: scanner_loop(application))
@@ -184,6 +186,15 @@ async def post_init(application: Application):
 
     if CHANNEL_ID:
         _spawn("channel", lambda: channel_scheduler(application.bot, CHANNEL_ID))
+
+    _spawn(
+        "sessions",
+        lambda: session_scheduler(
+            application.bot,
+            subscribers_fn=get_session_alert_users,
+            channel_id=CHANNEL_ID,
+        )
+    )
 
     # 5. Log startup summary
     logger.info(

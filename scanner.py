@@ -16,6 +16,12 @@ ALL_PATTERNS = ["FVG", "IFVG", "OB", "BOS", "CHoCH", "Swings", "Sweeps", "Volume
 def ts_utc(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%H:%M")
 
+def fmt_price(p: float) -> str:
+    """Consistent price formatting: 66445.1 / 1.85 / 0.0023"""
+    if p >= 1000: return f"{p:,.1f}"
+    if p >= 1:    return f"{p:.2f}"
+    return f"{p:.4f}"
+
 
 async def fetch_candles(session, symbol, interval, limit=CANDLE_LIMIT):
     url = f"{BINANCE_BASE}/fapi/v1/klines"
@@ -55,7 +61,7 @@ def detect_fvg(candles):
                     "gap_low": gap_low, "gap_high": gap_high,
                     "time": c0["time"], "time2": c2["time"],
                     "detail": (f"FVG: {ts_utc(c0['time'])} | {ts_utc(c2['time'])} | "
-                               f"{gap_low:.4f} - {gap_high:.4f} | Bullish FVG [UNFILLED]")
+                               f"{fmt_price(gap_low)} - {fmt_price(gap_high)} | Bullish FVG [UNFILLED]")
                 })
                 break  # report most recent
 
@@ -70,7 +76,7 @@ def detect_fvg(candles):
                     "gap_low": gap_low, "gap_high": gap_high,
                     "time": c0["time"], "time2": c2["time"],
                     "detail": (f"FVG: {ts_utc(c0['time'])} | {ts_utc(c2['time'])} | "
-                               f"{gap_low:.4f} - {gap_high:.4f} | Bearish FVG [UNFILLED]")
+                               f"{fmt_price(gap_low)} - {fmt_price(gap_high)} | Bearish FVG [UNFILLED]")
                 })
                 break
     return results
@@ -114,7 +120,7 @@ def detect_ifvg(candles):
                     "type": "IFVG", "direction": "Bullish",
                     "gap_low": gap_low, "gap_high": gap_high,
                     "detail": (f"IFVG: {ts_utc(current['time'])} | "
-                               f"{gap_low:.4f} - {gap_high:.4f} | "
+                               f"{fmt_price(gap_low)} - {fmt_price(gap_high)} | "
                                f"Bullish IFVG (filled gap = support)")
                 })
                 break
@@ -131,7 +137,7 @@ def detect_ifvg(candles):
                     "type": "IFVG", "direction": "Bearish",
                     "gap_low": gap_low, "gap_high": gap_high,
                     "detail": (f"IFVG: {ts_utc(current['time'])} | "
-                               f"{gap_low:.4f} - {gap_high:.4f} | "
+                               f"{fmt_price(gap_low)} - {fmt_price(gap_high)} | "
                                f"Bearish IFVG (filled gap = resistance)")
                 })
                 break
@@ -161,7 +167,7 @@ def detect_ob(candles):
                     "type": "OB", "direction": "Bullish",
                     "ob_high": c["high"], "ob_low": c["low"],
                     "detail": (f"OB: {ts_utc(c['time'])} | "
-                               f"{c['low']:.4f} - {c['high']:.4f} | Bullish OB")
+                               f"{fmt_price(c['low'])} - {fmt_price(c['high'])} | Bullish OB")
                 })
                 break
 
@@ -173,7 +179,7 @@ def detect_ob(candles):
                     "type": "OB", "direction": "Bearish",
                     "ob_high": c["high"], "ob_low": c["low"],
                     "detail": (f"OB: {ts_utc(c['time'])} | "
-                               f"{c['low']:.4f} - {c['high']:.4f} | Bearish OB")
+                               f"{fmt_price(c['low'])} - {fmt_price(c['high'])} | Bearish OB")
                 })
                 break
     return results
@@ -189,10 +195,10 @@ def detect_bos(candles):
     swing_low = min(c["low"] for c in lookback)
     if last["close"] > swing_high:
         return [{"type": "BOS", "direction": "Bullish", "level": swing_high,
-                 "detail": f"BOS: {ts_utc(last['time'])} | {swing_high:.4f} | Bullish BOS"}]
+                 "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(swing_high)} | Bullish BOS"}]
     if last["close"] < swing_low:
         return [{"type": "BOS", "direction": "Bearish", "level": swing_low,
-                 "detail": f"BOS: {ts_utc(last['time'])} | {swing_low:.4f} | Bearish BOS"}]
+                 "detail": f"BOS: {ts_utc(last['time'])} | {fmt_price(swing_low)} | Bearish BOS"}]
     return []
 
 
@@ -228,11 +234,11 @@ def detect_choch(candles):
     # CHoCH bearish: uptrend but price breaks last swing low
     if uptrend and last["close"] < swing_lows[-1]:
         return [{"type": "CHoCH", "direction": "Bearish", "level": swing_lows[-1],
-                 "detail": f"CHoCH: {ts_utc(last['time'])} | {swing_lows[-1]:.4f} | Bearish CHoCH ⚠️"}]
+                 "detail": f"CHoCH: {ts_utc(last['time'])} | {fmt_price(swing_lows[-1])} | Bearish CHoCH ⚠️"}]
     # CHoCH bullish: downtrend but price breaks last swing high
     if downtrend and last["close"] > swing_highs[-1]:
         return [{"type": "CHoCH", "direction": "Bullish", "level": swing_highs[-1],
-                 "detail": f"CHoCH: {ts_utc(last['time'])} | {swing_highs[-1]:.4f} | Bullish CHoCH ⚠️"}]
+                 "detail": f"CHoCH: {ts_utc(last['time'])} | {fmt_price(swing_highs[-1])} | Bullish CHoCH ⚠️"}]
     return []
 
 
@@ -243,10 +249,10 @@ def detect_swings(candles):
     c0, c1, c2 = candles[-3], candles[-2], candles[-1]
     if c1["high"] > c0["high"] and c1["high"] > c2["high"]:
         return [{"type": "Swings", "direction": "High", "level": c1["high"],
-                 "detail": f"SWING: {ts_utc(c1['time'])} | {c1['high']:.4f} | Swing High"}]
+                 "detail": f"SWING: {ts_utc(c1['time'])} | {fmt_price(c1['high'])} | Swing High"}]
     if c1["low"] < c0["low"] and c1["low"] < c2["low"]:
         return [{"type": "Swings", "direction": "Low", "level": c1["low"],
-                 "detail": f"SWING: {ts_utc(c1['time'])} | {c1['low']:.4f} | Swing Low"}]
+                 "detail": f"SWING: {ts_utc(c1['time'])} | {fmt_price(c1['low'])} | Swing Low"}]
     return []
 
 
@@ -260,10 +266,10 @@ def detect_sweeps(candles):
     swing_low = min(c["low"] for c in lookback)
     if last["high"] > swing_high and last["close"] < swing_high:
         return [{"type": "Sweeps", "direction": "Bearish", "level": swing_high,
-                 "detail": f"SWEEP: {ts_utc(last['time'])} | {swing_high:.4f} | Bearish Sweep"}]
+                 "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(swing_high)} | Bearish Sweep"}]
     if last["low"] < swing_low and last["close"] > swing_low:
         return [{"type": "Sweeps", "direction": "Bullish", "level": swing_low,
-                 "detail": f"SWEEP: {ts_utc(last['time'])} | {swing_low:.4f} | Bullish Sweep"}]
+                 "detail": f"SWEEP: {ts_utc(last['time'])} | {fmt_price(swing_low)} | Bullish Sweep"}]
     return []
 
 
@@ -305,11 +311,11 @@ def detect_pd_zones(candles):
     # Price just crossed above equilibrium into premium
     if prev["close"] <= eq < last["close"]:
         return [{"type": "PD", "direction": "Premium",
-                 "detail": f"PREMIUM ZONE: {ts_utc(last['time'])} | EQ {eq:.4f} | Price entering premium (sell area)"}]
+                 "detail": f"PREMIUM ZONE: {ts_utc(last['time'])} | EQ {fmt_price(eq)} | Price entering premium (sell area)"}]
     # Price just crossed below equilibrium into discount
     if prev["close"] >= eq > last["close"]:
         return [{"type": "PD", "direction": "Discount",
-                 "detail": f"DISCOUNT ZONE: {ts_utc(last['time'])} | EQ {eq:.4f} | Price entering discount (buy area)"}]
+                 "detail": f"DISCOUNT ZONE: {ts_utc(last['time'])} | EQ {fmt_price(eq)} | Price entering discount (buy area)"}]
     return []
 
 

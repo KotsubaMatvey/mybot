@@ -8,13 +8,15 @@ from telegram.ext import ContextTypes
 
 from database import (
     get_user, upsert_user, set_active,
-    is_subscribed, get_subscription_status, set_owner
+    is_subscribed, get_subscription_status, set_owner,
+    toggle_sessions_alerts
 )
 from scanner import get_active_zones
 from keyboards import main_menu, confirm_stop_keyboard
 from formatters import build_dashboard_message, utc_now
 from alerts import signals_today
 from config import SYMBOLS, TIMEFRAMES, OWNER_IDS
+from sessions import get_current_session_message
 import onboarding
 import payment_flow
 
@@ -68,7 +70,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Patterns:*\n"
         "`FVG · IFVG · OB · BOS · CHoCH`\n"
         "`Swings · Sweeps · Volume · PD`\n\n"
-        "*Signal rating:*  ★☆☆☆☆ — ★★★★★\n\n"
         "⚠️ _Market analysis tool. Not financial advice._",
         parse_mode="Markdown"
     )
@@ -153,19 +154,31 @@ async def zones_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
-async def confluence_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+async def sessions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle session alerts + show current session."""
     user_id = update.effective_user.id
-    user    = get_user(user_id)
-    if not user or not user["setup_done"]:
-        await update.message.reply_text("Send /start first.")
+    if not is_subscribed(user_id):
+        await payment_flow.send_payment_screen(user_id, context, update)
         return
-    new_val = not user.get("confluence", True)
-    upsert_user(user_id, confluence=int(new_val))
-    state = "ON" if new_val else "OFF"
+
+    # If called from menu button — toggle and confirm
+    new_state = toggle_sessions_alerts(user_id)
+    state_str = "ON 🟢" if new_state else "OFF 🔴"
+
+    current = await get_current_session_message()
+
     await update.message.reply_text(
-        f"🔥 *Market Interpretations:*  `{state}`",
+        f"🕐 *Session Alerts:*  `{state_str}`\n\n{current}",
         parse_mode="Markdown"
     )
+
+
+async def session_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/session — show current session without toggling."""
+    current = await get_current_session_message()
+    await update.message.reply_text(current, parse_mode="Markdown")
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -177,9 +190,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/zones`       Active zones now\n"
         "`/status`      Subscription overview\n"
         "`/reset`       Change preferences\n"
-        "`/confluence`  Toggle interpretations\n"
         "`/stop`        Pause alerts\n"
-        "`/resume`      Resume alerts\n\n"
+        "`/resume`      Resume alerts\n"
+        "`/session`     Current session\n\n"
         "*Patterns*\n"
         "`FVG`  `IFVG`  `OB`  `BOS`  `CHoCH`\n"
         "`Swings`  `Sweeps`  `Volume`  `PD`\n\n"
@@ -242,7 +255,7 @@ async def menu_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         "❓ Help":       help_cmd,
         "⏸ Stop":       stop_cmd,
         "▶️ Resume":    resume_cmd,
-        "🔥 Confluence": confluence_cmd,
+        "🕐 Sessions":  sessions_cmd,
     }
     handler = dispatch.get(text)
     if handler:

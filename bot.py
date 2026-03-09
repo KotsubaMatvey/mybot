@@ -13,7 +13,8 @@ from config import TELEGRAM_BOT_TOKEN
 from scheduler import post_init
 from handlers import (
     start, reset, stop_cmd, resume_cmd,
-    status_cmd, zones_cmd, confluence_cmd, help_cmd,
+    status_cmd, zones_cmd, help_cmd,
+    sessions_cmd, session_status_cmd,
     callback_handler, menu_button_handler
 )
 from payment_flow import pay_cmd
@@ -40,8 +41,8 @@ def main():
     app.add_handler(CommandHandler("resume",     resume_cmd))
     app.add_handler(CommandHandler("status",     status_cmd))
     app.add_handler(CommandHandler("zones",      zones_cmd))
-    app.add_handler(CommandHandler("confluence", confluence_cmd))
     app.add_handler(CommandHandler("help",       help_cmd))
+    app.add_handler(CommandHandler("session",    session_status_cmd))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_button_handler))
 
