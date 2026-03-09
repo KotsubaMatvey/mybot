@@ -176,7 +176,7 @@ async def post_init(application: Application):
     # 3. Import here to avoid circular imports at module level
     from alerts import scanner_loop
     from classic_scanner import channel_scheduler
-    from sessions import session_scheduler
+    from sessions_scheduler import session_scheduler
     from database import get_session_alert_users
 
     # 4. Spawn managed tasks

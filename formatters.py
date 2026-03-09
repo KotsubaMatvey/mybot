@@ -22,46 +22,21 @@ def fmt_price(p: float) -> str:
     return f"{p:.4f}"
 
 
-def pattern_hint(ptype: str, direction: str) -> str:
-    hints = {
-        ("FVG",    "Bullish"):  "Unfilled gap below — potential support on retest",
-        ("FVG",    "Bearish"):  "Unfilled gap above — potential resistance on retest",
-        ("IFVG",   "Bullish"):  "Filled gap now acting as support",
-        ("IFVG",   "Bearish"):  "Filled gap now acting as resistance",
-        ("OB",     "Bullish"):  "Demand zone — last bearish candle before impulse",
-        ("OB",     "Bearish"):  "Supply zone — last bullish candle before impulse",
-        ("BOS",    "Bullish"):  "Structure broken upward — trend continuing",
-        ("BOS",    "Bearish"):  "Structure broken downward — trend continuing",
-        ("CHoCH",  "Bullish"):  "Character changed — possible reversal up",
-        ("CHoCH",  "Bearish"):  "Character changed — possible reversal down",
-        ("Swings", "High"):     "Swing high — liquidity pool above",
-        ("Swings", "Low"):      "Swing low — liquidity pool below",
-        ("Sweeps", "Bullish"):  "Liquidity swept below — watch for reversal",
-        ("Sweeps", "Bearish"):  "Liquidity swept above — watch for reversal",
-        ("Volume", "High"):     "Abnormal volume — institutional activity",
-        ("PD",     "Premium"):  "Premium zone — favor sells",
-        ("PD",     "Discount"): "Discount zone — favor buys",
-    }
-    return hints.get((ptype, direction), "")
 
 
 def build_alert_message(symbol: str, timeframe: str, patterns_meta: list) -> str:
     """
-    ICT pattern alert — tool format, no rating.
-    Shows what was detected and where, nothing more.
+    ICT pattern alert.
+
+    Format:
+      BTCUSDT (5m):                ← header
+        — FVG: 14:55 | 15:05 | 45030.0 - 44954.6 | Bearish FVG
+        — SWING: 15:00 | 44803.5 | Swing Low
     """
-    lines = [
-        f"*{symbol}  ·  {timeframe}*",
-        "",
-    ]
+    lines = [f"{symbol} ({timeframe}):"]
     for p in patterns_meta:
         detail = p.get("detail", "")
-        hint   = pattern_hint(p.get("pattern", ""), p.get("direction", ""))
-        lines.append(f"`{detail}`")
-        if hint:
-            lines.append(f"_{hint}_")
-        lines.append("")
-    lines.append(f"`{utc_now()}`")
+        lines.append(f"  ▪ {detail}")
     return "\n".join(lines)
 
 
