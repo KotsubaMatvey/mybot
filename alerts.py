@@ -124,7 +124,7 @@ async def _send_digest(application: Application, users: list):
                     continue
                 for p in zones.get(symbol, {}).get(tf, []):
                     if p["type"] in user["patterns"]:
-                        sym_lines.append(f"  `{tf}`  {p['detail']}")
+                        sym_lines.append(f"  {tf}  {p['detail']}")
                         has = True
             if len(sym_lines) > 1:
                 lines.extend(sym_lines)

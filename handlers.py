@@ -72,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Real-time ICT pattern scanner for Binance Futures.\n\n"
         "Patterns:\n"
         "FVG | IFVG | OB | BOS | CHoCH\n"
-        "Swings | Sweeps | Volume\n\n"
+        "Swings | Sweeps | Volume | SMT\n\n"
         "Market analysis tool. Not financial advice."
     )
     try:
@@ -304,7 +304,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/session`     Current session\n\n"
         "*Patterns*\n"
         "`FVG`  `IFVG`  `OB`  `BOS`  `CHoCH`\n"
-        "`Swings`  `Sweeps`  `Volume`  `PD`\n\n"
+        "`Swings`  `Sweeps`  `Volume`  `PD`  `SMT`\n\n"
         "⚠️ _Not financial advice._",
         parse_mode="Markdown"
     )
