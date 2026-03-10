@@ -5,9 +5,12 @@ Multi-timeframe confluence detection.
 """
 
 import asyncio
+import logging
 import aiohttp
 from datetime import datetime, timezone
 from config import SYMBOLS, TIMEFRAMES, CANDLE_LIMIT
+
+logger = logging.getLogger(__name__)
 
 # Module-level candle cache — updated every scan, read by chart requests
 _candle_cache: dict = {}  # {(symbol, tf): [candle, ...]}
@@ -565,14 +568,17 @@ def detect_choch(candles):
     if len(candles) < 30:
         return []
 
-    # Find swing highs and lows in last 30 candles
+    # Swing detection must use only CLOSED candles.
+    # candles[-1] is still forming — its high/low can change.
+    # Use candles[:-1] for swing structure, candles[-2] for BOS confirmation.
+    closed = candles[:-1]
     swing_highs = []
     swing_lows = []
-    for i in range(1, len(candles) - 1):
-        c = candles[i]
-        if c["high"] > candles[i-1]["high"] and c["high"] > candles[i+1]["high"]:
+    for i in range(1, len(closed) - 1):
+        c = closed[i]
+        if c["high"] > closed[i-1]["high"] and c["high"] > closed[i+1]["high"]:
             swing_highs.append(c["high"])
-        if c["low"] < candles[i-1]["low"] and c["low"] < candles[i+1]["low"]:
+        if c["low"] < closed[i-1]["low"] and c["low"] < closed[i+1]["low"]:
             swing_lows.append(c["low"])
 
     if len(swing_highs) < 2 or len(swing_lows) < 2:
@@ -610,11 +616,14 @@ def detect_swings(candles):
     if len(candles) < 10:
         return []
 
-    lookback = candles[-30:]
+    # Exclude candles[-1] — it's still forming. A swing high/low requires
+    # the right-neighbour (third candle) to be CLOSED to confirm the pattern.
+    lookback = candles[-31:-1]  # all closed candles
     avg_range = sum(abs(c["high"] - c["low"]) for c in lookback) / len(lookback)
     min_range = avg_range * 0.3  # swing candle must be meaningful
 
-    # Scan from newest to oldest (skip last candle — needs right neighbour)
+    # Scan from newest to oldest. At i = len-2: c_mid = lookback[-2], c_next = lookback[-1]
+    # Both are confirmed closed candles.
     for i in range(len(lookback) - 2, 0, -1):
         c_prev = lookback[i - 1]
         c_mid  = lookback[i]
@@ -753,9 +762,8 @@ def detect_pd_zones(candles):
     if len(candles) < 30:
         return []
 
-    scan     = candles[-50:]
+    scan     = candles[-51:-1]  # closed candles only — swing detection requires confirmed right-neighbour
     current  = candles[-1]
-    prev     = candles[-2]
     avg_range = sum(abs(c["high"] - c["low"]) for c in scan) / len(scan)
     min_range = avg_range * 0.3
 
@@ -763,7 +771,7 @@ def detect_pd_zones(candles):
     last_sh_val = last_sh_idx = None
     last_sl_val = last_sl_idx = None
 
-    for i in range(len(scan) - 3, 0, -1):
+    for i in range(len(scan) - 2, 0, -1):
         c_prev, c_mid, c_next = scan[i-1], scan[i], scan[i+1]
         if (c_mid["high"] - c_mid["low"]) < min_range:
             continue
