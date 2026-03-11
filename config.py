@@ -34,5 +34,6 @@ PAYMENT_CHECK_INTERVAL = 30
 # ── Insights channel
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
-# ── Welcome photo (relative to bot root; set to "" to disable)
-WELCOME_PHOTO = os.getenv("WELCOME_PHOTO", "assets/welcome.jpg")
+# ── Welcome photo (absolute path; set env to "" to disable)
+_default_photo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "welcome.jpg")
+WELCOME_PHOTO = os.getenv("WELCOME_PHOTO", _default_photo)

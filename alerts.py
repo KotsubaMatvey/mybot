@@ -28,11 +28,13 @@ def _chart_button(symbol: str, tf: str):
 
 
 
-# Shared state — imported by bot.py for /status command
+# Shared state — imported by handlers.py for /status command
 signals_today: dict = {}
+_last_reset_date = None  # tracks last midnight reset
 
 
 async def scanner_loop(application: Application):
+    global _last_reset_date
     logger.info("Scanner loop started")
     last_digest = 0
 
@@ -42,6 +44,12 @@ async def scanner_loop(application: Application):
             record_scan()
             users = get_all_active_users()
             now   = asyncio.get_event_loop().time()
+
+            # Midnight reset — by date, not by hour, so it works regardless of restart time
+            today = datetime.now(timezone.utc).date()
+            if today != _last_reset_date:
+                signals_today.clear()
+                _last_reset_date = today
 
             # Group alerts by (symbol, tf)
             grouped_meta: dict = {}
@@ -67,29 +75,28 @@ async def scanner_loop(application: Application):
                             # Send chart with caption
                             chart = await generate_chart(candles, filtered, symbol, tf)
                             if chart:
-                                from telegram import InputFile
                                 await application.bot.send_photo(
                                     uid,
                                     photo=chart,
                                     caption=msg,
-                                    parse_mode="Markdown",
                                     reply_markup=_chart_button(symbol, tf),
                                 )
                             else:
                                 # Chart failed — fallback to text + button
                                 await application.bot.send_message(
-                                    uid, msg, parse_mode="Markdown",
+                                    uid, msg,
                                     reply_markup=_chart_button(symbol, tf),
                                 )
                         else:
                             # Text alert + inline button to request chart
                             await application.bot.send_message(
-                                uid, msg, parse_mode="Markdown",
+                                uid, msg,
                                 reply_markup=_chart_button(symbol, tf),
                             )
 
                         signals_today[uid] = signals_today.get(uid, 0) + 1
                         record_alert()
+                        await asyncio.sleep(0.05)  # Telegram rate limit: 30 msg/sec global
                     except Exception as e:
                         logger.error(f"Alert send error {uid}: {e}")
                         record_error()
@@ -98,8 +105,6 @@ async def scanner_loop(application: Application):
             # Hourly digest
             if now - last_digest >= DIGEST_INTERVAL:
                 last_digest = now
-                if datetime.now(timezone.utc).hour == 0:
-                    signals_today.clear()
                 await _send_digest(application, users)
 
         except Exception as e:
@@ -124,7 +129,7 @@ async def _send_digest(application: Application, users: list):
                     continue
                 for p in zones.get(symbol, {}).get(tf, []):
                     if p["type"] in user["patterns"]:
-                        sym_lines.append(f"  {tf}  {p['detail']}")
+                        sym_lines.append(f"  `{tf}`  {p['detail']}")
                         has = True
             if len(sym_lines) > 1:
                 lines.extend(sym_lines)

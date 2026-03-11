@@ -10,7 +10,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "users.db")
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -50,7 +50,17 @@ def init_db():
         conn.commit()
 
 
+_ALLOWED_COLUMNS = {
+    "symbols", "patterns", "timeframes", "active", "setup_done",
+    "confluence", "expires_at", "invoice_id", "is_owner",
+    "sessions_alerts", "charts_enabled",
+}
+
+
 def upsert_user(user_id: int, **kwargs):
+    invalid = set(kwargs) - _ALLOWED_COLUMNS
+    if invalid:
+        raise ValueError(f"upsert_user: unknown column(s): {invalid}")
     with get_conn() as conn:
         existing = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
         if not existing:

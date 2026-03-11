@@ -65,3 +65,9 @@ async def start_health_server(port: int = 8080):
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info(f"Health check server started on port {port}")
+    try:
+        # Keep alive until cancelled
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
+        logger.info("Health check server stopped")

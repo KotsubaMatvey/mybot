@@ -59,12 +59,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_owner(user_id)
     user = get_user(user_id)
 
-    if user and user["setup_done"] and is_subscribed(user_id):
-        await send_dashboard(user_id, context, update)
-        return
-    if user and user["setup_done"] and not is_subscribed(user_id):
-        await payment_flow.send_payment_screen(user_id, context, update, expired=True)
-        return
+    if user and user["setup_done"]:
+        subscribed = is_subscribed(user_id)
+        if subscribed:
+            await send_dashboard(user_id, context, update)
+            return
+        else:
+            await payment_flow.send_payment_screen(user_id, context, update, expired=True)
+            return
 
     photo_path = WELCOME_PHOTO
     welcome_text = (
@@ -72,7 +74,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Real-time ICT pattern scanner for Binance Futures.\n\n"
         "Patterns:\n"
         "FVG | IFVG | OB | BOS | CHoCH\n"
-        "Swings | Sweeps | Volume | SMT\n\n"
+        "Swings | Sweeps | Volume\n\n"
         "Market analysis tool. Not financial advice."
     )
     try:
@@ -132,7 +134,11 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def zones_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
+    user_id = update.effective_user.id
+    if not is_subscribed(user_id):
+        await payment_flow.send_payment_screen(user_id, context, update, expired=True)
+        return
+    user = get_user(user_id)
     if not user or not user["setup_done"]:
         await update.message.reply_text("Send /start first.")
         return
@@ -304,7 +310,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/session`     Current session\n\n"
         "*Patterns*\n"
         "`FVG`  `IFVG`  `OB`  `BOS`  `CHoCH`\n"
-        "`Swings`  `Sweeps`  `Volume`  `PD`  `SMT`\n\n"
+        "`Swings`  `Sweeps`  `Volume`  `PD`\n\n"
         "⚠️ _Not financial advice._",
         parse_mode="Markdown"
     )

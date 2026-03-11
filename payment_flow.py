@@ -48,7 +48,11 @@ async def handle_callback(user_id: int, data: str, query, context) -> bool:
     if not data.startswith("check_pay_"):
         return False
 
-    invoice_id = int(data.split("_")[2])
+    try:
+        invoice_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        await query.answer("Invalid payment request.", show_alert=True)
+        return True
     paid = await check_invoice(invoice_id)
 
     if paid:
