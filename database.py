@@ -4,9 +4,10 @@ SQLite database for persistent user subscriptions.
 import sqlite3
 import json
 import os
-from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "users.db")
+DEFAULT_ENTRY_MODELS = ["Entry Model 1", "Entry Model 2", "Entry Model 3"]
+DEFAULT_TRADE_DIRECTIONS = ["long", "short"]
 
 
 def get_conn():
@@ -30,7 +31,9 @@ def init_db():
                 invoice_id  INTEGER DEFAULT NULL,
                 is_owner         INTEGER DEFAULT 0,
                 sessions_alerts  INTEGER DEFAULT 0,
-                charts_enabled   INTEGER DEFAULT 0
+                charts_enabled   INTEGER DEFAULT 0,
+                entry_models     TEXT DEFAULT '["Entry Model 1", "Entry Model 2", "Entry Model 3"]',
+                trade_directions TEXT DEFAULT '["long", "short"]'
             )
         """)
         # Migrations
@@ -41,6 +44,8 @@ def init_db():
             ("is_owner",    "INTEGER DEFAULT 0"),
             ("sessions_alerts",  "INTEGER DEFAULT 0"),
             ("charts_enabled",  "INTEGER DEFAULT 0"),
+            ("entry_models", """TEXT DEFAULT '["Entry Model 1", "Entry Model 2", "Entry Model 3"]'"""),
+            ("trade_directions", """TEXT DEFAULT '["long", "short"]'"""),
         ]:
             try:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
@@ -53,7 +58,7 @@ def init_db():
 _ALLOWED_COLUMNS = {
     "symbols", "patterns", "timeframes", "active", "setup_done",
     "confluence", "expires_at", "invoice_id", "is_owner",
-    "sessions_alerts", "charts_enabled",
+    "sessions_alerts", "charts_enabled", "entry_models", "trade_directions",
 }
 
 
@@ -82,6 +87,8 @@ def get_user(user_id: int) -> dict | None:
             "symbols": set(json.loads(row["symbols"])),
             "patterns": set(json.loads(row["patterns"])),
             "timeframes": set(json.loads(row["timeframes"])),
+            "entry_models": set(json.loads(row["entry_models"] or json.dumps(DEFAULT_ENTRY_MODELS))),
+            "trade_directions": set(json.loads(row["trade_directions"] or json.dumps(DEFAULT_TRADE_DIRECTIONS))),
             "active": bool(row["active"]),
             "setup_done": bool(row["setup_done"]),
             "confluence": bool(row["confluence"]) if row["confluence"] is not None else True,
@@ -93,29 +100,34 @@ def get_user(user_id: int) -> dict | None:
         }
 
 
-def get_all_active_users() -> list:
+def _has_live_access_row(row) -> bool:
     from datetime import datetime, timezone
+    is_owner = bool(row["is_owner"]) if row["is_owner"] is not None else False
+    if is_owner:
+        return True
+    expires = row["expires_at"]
+    if not expires:
+        return False
+    try:
+        return datetime.now(timezone.utc) < datetime.fromisoformat(expires)
+    except Exception:
+        return False
+
+
+def get_all_active_users() -> list:
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM users WHERE active=1 AND setup_done=1").fetchall()
-    now = datetime.now(timezone.utc)
     result = []
     for r in rows:
-        # Inline subscription check — avoids second DB query per user
-        is_owner = bool(r["is_owner"]) if r["is_owner"] is not None else False
-        expires  = r["expires_at"]
-        if not is_owner:
-            if not expires:
-                continue
-            try:
-                if now >= datetime.fromisoformat(expires):
-                    continue
-            except Exception:
-                continue
+        if not _has_live_access_row(r):
+            continue
         result.append({
             "user_id":        r["user_id"],
             "symbols":        set(json.loads(r["symbols"])),
             "patterns":       set(json.loads(r["patterns"])),
             "timeframes":     set(json.loads(r["timeframes"])),
+            "entry_models":   set(json.loads(r["entry_models"] or json.dumps(DEFAULT_ENTRY_MODELS))),
+            "trade_directions": set(json.loads(r["trade_directions"] or json.dumps(DEFAULT_TRADE_DIRECTIONS))),
             "charts_enabled": bool(r["charts_enabled"]) if r["charts_enabled"] is not None else False,
         })
     return result
@@ -125,12 +137,21 @@ def set_active(user_id: int, active: bool):
     upsert_user(user_id, active=int(active))
 
 
-def save_preferences(user_id: int, symbols: set, patterns: set, timeframes: set):
+def save_preferences(
+    user_id: int,
+    symbols: set,
+    patterns: set,
+    timeframes: set,
+    entry_models: set | None = None,
+    trade_directions: set | None = None,
+):
     upsert_user(
         user_id,
         symbols=list(symbols),
         patterns=list(patterns),
         timeframes=list(timeframes),
+        entry_models=list(entry_models or DEFAULT_ENTRY_MODELS),
+        trade_directions=list(trade_directions or DEFAULT_TRADE_DIRECTIONS),
         active=1,
         setup_done=1,
     )
@@ -140,7 +161,7 @@ def set_subscription(user_id: int, days: int):
     """Activate subscription for N days from now."""
     from datetime import datetime, timezone, timedelta
     expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-    upsert_user(user_id, expires_at=expires, active=1, setup_done=1)
+    upsert_user(user_id, expires_at=expires)
 
 
 def is_subscribed(user_id: int) -> bool:
@@ -163,12 +184,13 @@ def is_subscribed(user_id: int) -> bool:
 
 def set_owner(user_id: int):
     """Grant permanent free access."""
-    upsert_user(user_id, is_owner=1, active=1, setup_done=1)
+    upsert_user(user_id, is_owner=1)
 
 
 def get_subscription_status(user_id: int) -> str:
     """Human-readable subscription status string."""
     from datetime import datetime, timezone
+    import math
     user = get_user(user_id)
     if not user:
         return "No subscription"
@@ -182,7 +204,7 @@ def get_subscription_status(user_id: int) -> str:
         now    = datetime.now(timezone.utc)
         if now >= exp_dt:
             return "❌ Subscription expired"
-        days_left = (exp_dt - now).days
+        days_left = max(1, math.ceil((exp_dt - now).total_seconds() / 86400))
         return f"✅ Active — {days_left} days remaining"
     except Exception:
         return "Unknown"
@@ -192,9 +214,9 @@ def get_session_alert_users() -> list[int]:
     """Return user_ids of all active subscribed users with sessions_alerts enabled."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT user_id FROM users WHERE active=1 AND setup_done=1 AND sessions_alerts=1"
+            "SELECT * FROM users WHERE active=1 AND setup_done=1 AND sessions_alerts=1"
         ).fetchall()
-    return [r["user_id"] for r in rows]
+    return [r["user_id"] for r in rows if _has_live_access_row(r)]
 
 
 def toggle_sessions_alerts(user_id: int) -> bool:
