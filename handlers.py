@@ -97,7 +97,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in OWNER_IDS or is_subscribed(user_id):
         onboarding.init(user_id)
         await update.message.reply_text(
-            "Setup Preferences\n\nSelect symbols, primitive alerts, timeframes, entry models and directions.",
+            "Setup Preferences\n\nSelect symbols, primitive alerts, timeframes, entry models and directions."
         )
         await onboarding.send_step_symbols(user_id, context)
         return

@@ -6,10 +6,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
 
 def main_menu() -> ReplyKeyboardMarkup:
     kb = [
-        [KeyboardButton("ZONES"), KeyboardButton("STATUS")],
-        [KeyboardButton("SETTINGS"), KeyboardButton("SESSIONS"), KeyboardButton("CHARTS")],
-        [KeyboardButton("STOP"), KeyboardButton("RESUME")],
-        [KeyboardButton("HELP")],
+        [KeyboardButton("▪ ZONES"), KeyboardButton("◎ STATUS")],
+        [KeyboardButton("◉ SETTINGS"), KeyboardButton("◷ SESSIONS"), KeyboardButton("▤ CHARTS")],
+        [KeyboardButton("■ STOP"), KeyboardButton("▶ RESUME")],
+        [KeyboardButton("? HELP")],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
