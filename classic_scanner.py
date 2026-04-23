@@ -115,9 +115,10 @@ def _build_messages(d: dict) -> list[dict]:
     ob      = d["ob"]
     ob_dom  = d["ob_dom"]
     messages = []
+    directional_pattern = bool(pattern and pattern[1] != "neutral")
 
     # ── Type 2 + 3: Pattern detected
-    if pattern and pattern[1] != "neutral":
+    if directional_pattern:
         pat_name, pat_dir = pattern
 
         ob_confirms  = (ob_dom == "bids"  and pat_dir == "bullish") or \
@@ -149,7 +150,7 @@ def _build_messages(d: dict) -> list[dict]:
                     })
 
     # ── Type 4: Bounce — RSI extreme + OB, no candle pattern
-    elif extreme and not pattern:
+    elif extreme and not directional_pattern:
         if (rsi_dir == "bullish" and ob_dom == "bids") or \
            (rsi_dir == "bearish" and ob_dom == "asks"):
             messages.append({

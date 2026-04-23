@@ -5,8 +5,14 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from database import upsert_user, is_subscribed, set_subscription, get_subscription_status
-from payments import create_invoice, check_invoice, SUBSCRIPTION_PRICE
+from database import (
+    get_user,
+    upsert_user,
+    is_subscribed,
+    set_subscription,
+    get_subscription_status,
+)
+from payments import create_invoice, check_invoice, SUBSCRIPTION_PRICE, SUBSCRIPTION_DAYS
 from keyboards import payment_keyboard, main_menu
 from formatters import build_payment_message
 import onboarding
@@ -53,13 +59,22 @@ async def handle_callback(user_id: int, data: str, query, context) -> bool:
     except (IndexError, ValueError):
         await query.answer("Invalid payment request.", show_alert=True)
         return True
+
+    user = get_user(user_id)
+    expected_invoice = user.get("invoice_id") if user else None
+    if expected_invoice and invoice_id != expected_invoice:
+        await query.answer("This payment link is outdated. Request a new invoice.", show_alert=True)
+        return True
+
     paid = await check_invoice(invoice_id)
 
     if paid:
-        set_subscription(user_id, 30)
+        await query.answer()
+        set_subscription(user_id, SUBSCRIPTION_DAYS)
         _pending.pop(user_id, None)
+        upsert_user(user_id, invoice_id=None)
         await query.edit_message_text(
-            "✅ *Payment confirmed!*\n\n_Your 30-day subscription is now active._",
+            f"✅ *Payment confirmed!*\n\n_Your {SUBSCRIPTION_DAYS}-day subscription is now active._",
             parse_mode="Markdown"
         )
         onboarding.init(user_id)
