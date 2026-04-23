@@ -1,235 +1,266 @@
-"""
-SQLite database for persistent user subscriptions.
-"""
-import sqlite3
+"""SQLite persistence for users, subscriptions, and preferences."""
+from __future__ import annotations
+
 import json
 import os
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "users.db")
+
 DEFAULT_ENTRY_MODELS = ["Entry Model 1", "Entry Model 2", "Entry Model 3"]
 DEFAULT_TRADE_DIRECTIONS = ["long", "short"]
 
+_USER_COLUMNS: dict[str, str] = {
+    "user_id": "INTEGER PRIMARY KEY",
+    "symbols": "TEXT DEFAULT '[]'",
+    "patterns": "TEXT DEFAULT '[]'",
+    "timeframes": "TEXT DEFAULT '[]'",
+    "active": "INTEGER DEFAULT 0",
+    "setup_done": "INTEGER DEFAULT 0",
+    "confluence": "INTEGER DEFAULT 1",
+    "expires_at": "TEXT DEFAULT NULL",
+    "invoice_id": "INTEGER DEFAULT NULL",
+    "is_owner": "INTEGER DEFAULT 0",
+    "sessions_alerts": "INTEGER DEFAULT 0",
+    "charts_enabled": "INTEGER DEFAULT 0",
+    "entry_models": """TEXT DEFAULT '["Entry Model 1", "Entry Model 2", "Entry Model 3"]'""",
+    "trade_directions": """TEXT DEFAULT '["long", "short"]'""",
+}
+_JSON_COLUMNS = {"symbols", "patterns", "timeframes", "entry_models", "trade_directions"}
+_BOOL_COLUMNS = {"active", "setup_done", "confluence", "is_owner", "sessions_alerts", "charts_enabled"}
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
-    conn.row_factory = sqlite3.Row
-    return conn
+
+def get_conn() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
-def init_db():
+def init_db() -> None:
     with get_conn() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
-                user_id     INTEGER PRIMARY KEY,
-                symbols     TEXT DEFAULT '[]',
-                patterns    TEXT DEFAULT '[]',
-                timeframes  TEXT DEFAULT '[]',
-                active      INTEGER DEFAULT 0,
-                setup_done  INTEGER DEFAULT 0,
-                confluence  INTEGER DEFAULT 1,
-                expires_at  TEXT DEFAULT NULL,
-                invoice_id  INTEGER DEFAULT NULL,
-                is_owner         INTEGER DEFAULT 0,
-                sessions_alerts  INTEGER DEFAULT 0,
-                charts_enabled   INTEGER DEFAULT 0,
-                entry_models     TEXT DEFAULT '["Entry Model 1", "Entry Model 2", "Entry Model 3"]',
-                trade_directions TEXT DEFAULT '["long", "short"]'
+                user_id INTEGER PRIMARY KEY
             )
-        """)
-        # Migrations
-        for col, definition in [
-            ("confluence", "INTEGER DEFAULT 1"),
-            ("expires_at",  "TEXT DEFAULT NULL"),
-            ("invoice_id",  "INTEGER DEFAULT NULL"),
-            ("is_owner",    "INTEGER DEFAULT 0"),
-            ("sessions_alerts",  "INTEGER DEFAULT 0"),
-            ("charts_enabled",  "INTEGER DEFAULT 0"),
-            ("entry_models", """TEXT DEFAULT '["Entry Model 1", "Entry Model 2", "Entry Model 3"]'"""),
-            ("trade_directions", """TEXT DEFAULT '["long", "short"]'"""),
-        ]:
-            try:
-                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
-                conn.commit()
-            except Exception:
-                pass
+            """
+        )
+        existing_columns = _get_existing_columns(conn, "users")
+        for column, definition in _USER_COLUMNS.items():
+            if column in existing_columns:
+                continue
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
         conn.commit()
 
 
-_ALLOWED_COLUMNS = {
-    "symbols", "patterns", "timeframes", "active", "setup_done",
-    "confluence", "expires_at", "invoice_id", "is_owner",
-    "sessions_alerts", "charts_enabled", "entry_models", "trade_directions",
-}
+def _get_existing_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row["name"] for row in rows}
 
 
-def upsert_user(user_id: int, **kwargs):
-    invalid = set(kwargs) - _ALLOWED_COLUMNS
+def upsert_user(user_id: int, **kwargs: Any) -> None:
+    invalid = set(kwargs) - (set(_USER_COLUMNS) - {"user_id"})
     if invalid:
-        raise ValueError(f"upsert_user: unknown column(s): {invalid}")
+        raise ValueError(f"upsert_user: unknown column(s): {sorted(invalid)}")
+
     with get_conn() as conn:
-        existing = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not existing:
-            conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         if kwargs:
-            sets = ", ".join(f"{k}=?" for k in kwargs)
-            vals = [json.dumps(list(v)) if isinstance(v, (list, set)) else v for v in kwargs.values()]
-            conn.execute(f"UPDATE users SET {sets} WHERE user_id=?", (*vals, user_id))
+            assignments = ", ".join(f"{column}=?" for column in kwargs)
+            values = [_db_value(column, value) for column, value in kwargs.items()]
+            conn.execute(f"UPDATE users SET {assignments} WHERE user_id=?", (*values, user_id))
         conn.commit()
 
 
 def get_user(user_id: int) -> dict | None:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
-        if not row:
-            return None
-        return {
-            "user_id": row["user_id"],
-            "symbols": set(json.loads(row["symbols"])),
-            "patterns": set(json.loads(row["patterns"])),
-            "timeframes": set(json.loads(row["timeframes"])),
-            "entry_models": set(json.loads(row["entry_models"] or json.dumps(DEFAULT_ENTRY_MODELS))),
-            "trade_directions": set(json.loads(row["trade_directions"] or json.dumps(DEFAULT_TRADE_DIRECTIONS))),
-            "active": bool(row["active"]),
-            "setup_done": bool(row["setup_done"]),
-            "confluence": bool(row["confluence"]) if row["confluence"] is not None else True,
-            "expires_at": row["expires_at"],
-            "invoice_id": row["invoice_id"],
-            "is_owner":         bool(row["is_owner"]) if row["is_owner"] is not None else False,
-            "sessions_alerts":   bool(row["sessions_alerts"]) if row["sessions_alerts"] is not None else False,
-            "charts_enabled":    bool(row["charts_enabled"])  if row["charts_enabled"]  is not None else False,
-        }
+    if row is None:
+        return None
+    return _row_to_user(row)
 
 
-def _has_live_access_row(row) -> bool:
-    from datetime import datetime, timezone
-    is_owner = bool(row["is_owner"]) if row["is_owner"] is not None else False
-    if is_owner:
-        return True
-    expires = row["expires_at"]
-    if not expires:
-        return False
-    try:
-        return datetime.now(timezone.utc) < datetime.fromisoformat(expires)
-    except Exception:
-        return False
-
-
-def get_all_active_users() -> list:
+def get_all_active_users() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM users WHERE active=1 AND setup_done=1").fetchall()
-    result = []
-    for r in rows:
-        if not _has_live_access_row(r):
-            continue
-        result.append({
-            "user_id":        r["user_id"],
-            "symbols":        set(json.loads(r["symbols"])),
-            "patterns":       set(json.loads(r["patterns"])),
-            "timeframes":     set(json.loads(r["timeframes"])),
-            "entry_models":   set(json.loads(r["entry_models"] or json.dumps(DEFAULT_ENTRY_MODELS))),
-            "trade_directions": set(json.loads(r["trade_directions"] or json.dumps(DEFAULT_TRADE_DIRECTIONS))),
-            "charts_enabled": bool(r["charts_enabled"]) if r["charts_enabled"] is not None else False,
-        })
-    return result
+    return [_row_to_active_user(row) for row in rows if _has_live_access_row(row)]
 
 
-def set_active(user_id: int, active: bool):
-    upsert_user(user_id, active=int(active))
+def get_session_alert_users() -> list[int]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE active=1 AND setup_done=1 AND sessions_alerts=1"
+        ).fetchall()
+    return [row["user_id"] for row in rows if _has_live_access_row(row)]
 
 
 def save_preferences(
     user_id: int,
-    symbols: set,
-    patterns: set,
-    timeframes: set,
-    entry_models: set | None = None,
-    trade_directions: set | None = None,
-):
+    symbols: set[str],
+    patterns: set[str],
+    timeframes: set[str],
+    entry_models: set[str] | None = None,
+    trade_directions: set[str] | None = None,
+) -> None:
     upsert_user(
         user_id,
-        symbols=list(symbols),
-        patterns=list(patterns),
-        timeframes=list(timeframes),
-        entry_models=list(entry_models or DEFAULT_ENTRY_MODELS),
-        trade_directions=list(trade_directions or DEFAULT_TRADE_DIRECTIONS),
+        symbols=sorted(symbols),
+        patterns=sorted(patterns),
+        timeframes=sorted(timeframes),
+        entry_models=sorted(entry_models or DEFAULT_ENTRY_MODELS),
+        trade_directions=sorted(trade_directions or DEFAULT_TRADE_DIRECTIONS),
         active=1,
         setup_done=1,
     )
 
 
-def set_subscription(user_id: int, days: int):
-    """Activate subscription for N days from now."""
-    from datetime import datetime, timezone, timedelta
-    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-    upsert_user(user_id, expires_at=expires)
+def set_active(user_id: int, active: bool) -> None:
+    upsert_user(user_id, active=int(active))
+
+
+def set_subscription(user_id: int, days: int) -> None:
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    upsert_user(user_id, expires_at=expires_at)
+
+
+def set_owner(user_id: int) -> None:
+    upsert_user(user_id, is_owner=1)
 
 
 def is_subscribed(user_id: int) -> bool:
-    """Check if user has active subscription (or is owner)."""
-    from datetime import datetime, timezone
     user = get_user(user_id)
     if not user:
         return False
     if user.get("is_owner"):
         return True
-    expires = user.get("expires_at")
-    if not expires:
+    expires_at = user.get("expires_at")
+    if not expires_at:
         return False
     try:
-        exp_dt = datetime.fromisoformat(expires)
-        return datetime.now(timezone.utc) < exp_dt
-    except Exception:
+        return datetime.now(timezone.utc) < datetime.fromisoformat(expires_at)
+    except ValueError:
         return False
-
-
-def set_owner(user_id: int):
-    """Grant permanent free access."""
-    upsert_user(user_id, is_owner=1)
 
 
 def get_subscription_status(user_id: int) -> str:
-    """Human-readable subscription status string."""
-    from datetime import datetime, timezone
-    import math
     user = get_user(user_id)
     if not user:
         return "No subscription"
     if user.get("is_owner"):
-        return "👑 Owner — lifetime access"
-    expires = user.get("expires_at")
-    if not expires:
+        return "Owner - lifetime access"
+    expires_at = user.get("expires_at")
+    if not expires_at:
         return "No active subscription"
     try:
-        exp_dt = datetime.fromisoformat(expires)
-        now    = datetime.now(timezone.utc)
-        if now >= exp_dt:
-            return "❌ Subscription expired"
-        days_left = max(1, math.ceil((exp_dt - now).total_seconds() / 86400))
-        return f"✅ Active — {days_left} days remaining"
-    except Exception:
+        expiry = datetime.fromisoformat(expires_at)
+    except ValueError:
         return "Unknown"
 
-
-def get_session_alert_users() -> list[int]:
-    """Return user_ids of all active subscribed users with sessions_alerts enabled."""
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM users WHERE active=1 AND setup_done=1 AND sessions_alerts=1"
-        ).fetchall()
-    return [r["user_id"] for r in rows if _has_live_access_row(r)]
+    now = datetime.now(timezone.utc)
+    if now >= expiry:
+        return "Subscription expired"
+    days_left = max(1, int((expiry - now).total_seconds() // 86400 + 0.999))
+    return f"Active - {days_left} days remaining"
 
 
 def toggle_sessions_alerts(user_id: int) -> bool:
-    """Toggle sessions_alerts for user. Returns new state."""
     user = get_user(user_id)
-    new_val = not user.get("sessions_alerts", False) if user else True
-    upsert_user(user_id, sessions_alerts=int(new_val))
-    return new_val
+    new_value = not user.get("sessions_alerts", False) if user else True
+    upsert_user(user_id, sessions_alerts=int(new_value))
+    return new_value
 
 
 def toggle_charts(user_id: int) -> bool:
-    """Toggle auto chart generation. Returns new state."""
-    user    = get_user(user_id)
-    new_val = not user.get("charts_enabled", False) if user else True
-    upsert_user(user_id, charts_enabled=int(new_val))
-    return new_val
+    user = get_user(user_id)
+    new_value = not user.get("charts_enabled", False) if user else True
+    upsert_user(user_id, charts_enabled=int(new_value))
+    return new_value
+
+
+def _row_to_user(row: sqlite3.Row) -> dict:
+    return {
+        "user_id": row["user_id"],
+        "symbols": _load_json_set(row["symbols"]),
+        "patterns": _load_json_set(row["patterns"]),
+        "timeframes": _load_json_set(row["timeframes"]),
+        "entry_models": _load_json_set(row["entry_models"], DEFAULT_ENTRY_MODELS),
+        "trade_directions": _load_json_set(row["trade_directions"], DEFAULT_TRADE_DIRECTIONS),
+        "active": bool(row["active"]),
+        "setup_done": bool(row["setup_done"]),
+        "confluence": True if row["confluence"] is None else bool(row["confluence"]),
+        "expires_at": row["expires_at"],
+        "invoice_id": row["invoice_id"],
+        "is_owner": bool(row["is_owner"]),
+        "sessions_alerts": bool(row["sessions_alerts"]),
+        "charts_enabled": bool(row["charts_enabled"]),
+    }
+
+
+def _row_to_active_user(row: sqlite3.Row) -> dict:
+    user = _row_to_user(row)
+    return {
+        "user_id": user["user_id"],
+        "symbols": user["symbols"],
+        "patterns": user["patterns"],
+        "timeframes": user["timeframes"],
+        "entry_models": user["entry_models"],
+        "trade_directions": user["trade_directions"],
+        "charts_enabled": user["charts_enabled"],
+    }
+
+
+def _load_json_set(raw: str | None, default: list[str] | None = None) -> set[str]:
+    if not raw:
+        return set(default or [])
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return set(default or [])
+    if isinstance(value, list):
+        return {str(item) for item in value}
+    return set(default or [])
+
+
+def _db_value(column: str, value: Any) -> Any:
+    if column in _JSON_COLUMNS:
+        if isinstance(value, set):
+            value = sorted(value)
+        return json.dumps(list(value) if isinstance(value, list) else value)
+    if column in _BOOL_COLUMNS:
+        return int(bool(value))
+    return value
+
+
+def _has_live_access_row(row: sqlite3.Row) -> bool:
+    if bool(row["is_owner"]):
+        return True
+    expires_at = row["expires_at"]
+    if not expires_at:
+        return False
+    try:
+        return datetime.now(timezone.utc) < datetime.fromisoformat(expires_at)
+    except ValueError:
+        return False
+
+
+__all__ = [
+    "DB_PATH",
+    "DEFAULT_ENTRY_MODELS",
+    "DEFAULT_TRADE_DIRECTIONS",
+    "get_all_active_users",
+    "get_conn",
+    "get_session_alert_users",
+    "get_subscription_status",
+    "get_user",
+    "init_db",
+    "is_subscribed",
+    "save_preferences",
+    "set_active",
+    "set_owner",
+    "set_subscription",
+    "toggle_charts",
+    "toggle_sessions_alerts",
+    "upsert_user",
+]

@@ -1,24 +1,30 @@
-"""
-Trillion Strategy Alert Bot
-ICT pattern scanner + classic TA channel alerts
-"""
+"""Application entrypoint."""
+from __future__ import annotations
+
 import logging
+
 from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters
-)
-from database import init_db
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+
 from config import TELEGRAM_BOT_TOKEN
-from scheduler import post_init
+from database import init_db
 from handlers import (
-    start, reset, stop_cmd, resume_cmd,
-    status_cmd, zones_cmd, help_cmd,
-    sessions_cmd, session_status_cmd,
-    charts_cmd, chart_cmd,
-    callback_handler, menu_button_handler
+    callback_handler,
+    chart_cmd,
+    charts_cmd,
+    help_cmd,
+    menu_button_handler,
+    reset,
+    resume_cmd,
+    session_status_cmd,
+    sessions_cmd,
+    start,
+    status_cmd,
+    stop_cmd,
+    zones_cmd,
 )
 from payment_flow import pay_cmd
+from scheduler import post_init
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",

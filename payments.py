@@ -1,55 +1,46 @@
-"""
-CryptoBot payment integration.
-Docs: https://help.crypt.bot/crypto-pay-api
-"""
-import aiohttp
+"""CryptoBot payment integration."""
+from __future__ import annotations
+
 import logging
+
+import aiohttp
+
 from config import CRYPTOBOT_TOKEN
 
 logger = logging.getLogger(__name__)
 
-CRYPTOBOT_API      = "https://pay.crypt.bot/api"
+CRYPTOBOT_API = "https://pay.crypt.bot/api"
 SUBSCRIPTION_PRICE = "29.99"
-SUBSCRIPTION_DAYS  = 30
-ACCEPTED_ASSETS    = ["USDT", "TON", "BTC", "ETH", "LTC", "BNB", "TRX", "USDC"]
-
-# ── Config validation — fail loudly at import time, not at runtime
-if not CRYPTOBOT_TOKEN:
-    logger.critical(
-        "CRYPTOBOT_TOKEN is not set. "
-        "Add it to your .env file. "
-        "Payment functions will return None until this is fixed."
-    )
-
+SUBSCRIPTION_DAYS = 30
+ACCEPTED_ASSETS = ["USDT", "TON", "BTC", "ETH", "LTC", "BNB", "TRX", "USDC"]
 _PAYMENTS_ENABLED = bool(CRYPTOBOT_TOKEN)
 
+if not CRYPTOBOT_TOKEN:
+    logger.critical(
+        "CRYPTOBOT_TOKEN is not set. Add it to .env. Payment calls will degrade safely."
+    )
 
-def _headers() -> dict:
+
+def _headers() -> dict[str, str]:
     return {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
 
 
 async def create_invoice(user_id: int) -> dict | None:
-    """
-    Create a multi-currency invoice.
-    Returns {"invoice_id": int, "pay_url": str} or None.
-
-    Returns None immediately if CRYPTOBOT_TOKEN is not configured.
-    """
+    """Create a multi-currency invoice. Returns None if payments are unavailable."""
     if not _PAYMENTS_ENABLED:
-        logger.error("create_invoice called but CRYPTOBOT_TOKEN is not set — skipping")
+        logger.error("create_invoice called while payments are disabled")
         return None
 
-    # Try fiat-pegged invoice first (payer chooses crypto, amount auto-converts)
     payload_fiat = {
-        "currency_type":   "fiat",
-        "fiat":            "USD",
+        "currency_type": "fiat",
+        "fiat": "USD",
         "accepted_assets": ",".join(ACCEPTED_ASSETS),
-        "amount":          SUBSCRIPTION_PRICE,
-        "description":     "ICT Crypto Alerts — 30 day subscription",
-        "payload":         str(user_id),
-        "allow_comments":  False,
+        "amount": SUBSCRIPTION_PRICE,
+        "description": "ICT Crypto Alerts - 30 day subscription",
+        "payload": str(user_id),
+        "allow_comments": False,
         "allow_anonymous": False,
-        "expires_in":      3600,
+        "expires_in": 3600,
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -58,23 +49,22 @@ async def create_invoice(user_id: int) -> dict | None:
                 json=payload_fiat,
                 headers=_headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                data = await resp.json()
+            ) as response:
+                data = await response.json()
 
         if data.get("ok"):
-            inv = data["result"]
-            return {"invoice_id": inv["invoice_id"], "pay_url": inv["pay_url"]}
+            invoice = data["result"]
+            return {"invoice_id": invoice["invoice_id"], "pay_url": invoice["pay_url"]}
 
-        # Fallback: fixed USDT invoice
-        logger.warning(f"Fiat invoice failed, falling back to USDT: {data}")
+        logger.warning("Fiat invoice failed, falling back to USDT: %s", data)
         payload_usdt = {
-            "asset":           "USDT",
-            "amount":          SUBSCRIPTION_PRICE,
-            "description":     "ICT Crypto Alerts — 30 day subscription",
-            "payload":         str(user_id),
-            "allow_comments":  False,
+            "asset": "USDT",
+            "amount": SUBSCRIPTION_PRICE,
+            "description": "ICT Crypto Alerts - 30 day subscription",
+            "payload": str(user_id),
+            "allow_comments": False,
             "allow_anonymous": False,
-            "expires_in":      3600,
+            "expires_in": 3600,
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -82,25 +72,23 @@ async def create_invoice(user_id: int) -> dict | None:
                 json=payload_usdt,
                 headers=_headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                data = await resp.json()
-
+            ) as response:
+                data = await response.json()
         if data.get("ok"):
-            inv = data["result"]
-            return {"invoice_id": inv["invoice_id"], "pay_url": inv["pay_url"]}
+            invoice = data["result"]
+            return {"invoice_id": invoice["invoice_id"], "pay_url": invoice["pay_url"]}
 
-        logger.error(f"CryptoBot createInvoice failed: {data}")
+        logger.error("CryptoBot createInvoice failed: %s", data)
         return None
-
-    except Exception as e:
-        logger.error(f"CryptoBot request error: {e}")
+    except Exception as exc:
+        logger.error("CryptoBot request error: %s", exc)
         return None
 
 
 async def check_invoice(invoice_id: int) -> bool:
-    """Returns True if invoice is paid. Returns False immediately if token not set."""
+    """Return True if the invoice has been paid."""
     if not _PAYMENTS_ENABLED:
-        logger.error("check_invoice called but CRYPTOBOT_TOKEN is not set — skipping")
+        logger.error("check_invoice called while payments are disabled")
         return False
 
     try:
@@ -110,16 +98,22 @@ async def check_invoice(invoice_id: int) -> bool:
                 params={"invoice_ids": invoice_id},
                 headers=_headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                data = await resp.json()
-
+            ) as response:
+                data = await response.json()
         if data.get("ok"):
             items = data["result"].get("items", [])
             return bool(items and items[0]["status"] == "paid")
-
-        logger.error(f"CryptoBot getInvoices error: {data}")
+        logger.error("CryptoBot getInvoices error: %s", data)
+        return False
+    except Exception as exc:
+        logger.error("CryptoBot check error: %s", exc)
         return False
 
-    except Exception as e:
-        logger.error(f"CryptoBot check error: {e}")
-        return False
+
+__all__ = [
+    "ACCEPTED_ASSETS",
+    "SUBSCRIPTION_DAYS",
+    "SUBSCRIPTION_PRICE",
+    "check_invoice",
+    "create_invoice",
+]

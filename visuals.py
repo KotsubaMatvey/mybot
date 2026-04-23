@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 
+from presentation.chart_payloads import visible_alerts_for_chart
+from presentation.types import AlertPayload
+
 logger = logging.getLogger(__name__)
 
 _STYLE = mpf.make_mpf_style(
@@ -52,84 +55,70 @@ _LEVEL_STYLE = {
 _CANDLE_COUNT = {"1m": 90, "5m": 72, "15m": 64, "30m": 56, "1h": 48, "4h": 42, "1d": 30}
 
 
-def _to_df(candles: list, timeframe: str) -> pd.DataFrame:
+def _to_df(candles: list[dict], timeframe: str) -> pd.DataFrame:
     raw = candles[-_CANDLE_COUNT.get(timeframe, 60) :]
-    df = pd.DataFrame(raw)
-    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
-    df = df.set_index("time")
-    df.columns = [name.capitalize() for name in df.columns]
-    return df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+    frame = pd.DataFrame(raw)
+    frame["time"] = pd.to_datetime(frame["time"], unit="ms", utc=True)
+    frame = frame.set_index("time")
+    frame.columns = [name.capitalize() for name in frame.columns]
+    return frame[["Open", "High", "Low", "Close", "Volume"]].astype(float)
 
 
-def _draw_patterns(ax, patterns: list[dict], df: pd.DataFrame):
-    n = len(df)
+def _draw_patterns(ax, patterns: list[AlertPayload], n: int) -> None:
     for pattern in patterns:
-        name = pattern.get("pattern", "")
-        if pattern.get("alert_kind") == "strategy":
+        if pattern.alert_kind == "strategy":
             _draw_setup(ax, pattern, n)
             continue
 
-        if name in ("FVG", "IFVG"):
-            low = pattern.get("gap_low")
-            high = pattern.get("gap_high")
-            if low is None or high is None:
-                continue
-            fill_color, line_color, alpha = _ZONE_STYLE.get(name, ("#64748b", "#334155", 0.12))
-            ax.axhspan(low, high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
-            ax.axhline(low, color=line_color, linestyle="--", linewidth=0.8)
-            ax.axhline(high, color=line_color, linestyle="--", linewidth=0.8)
-            ax.text(n - 1, (low + high) / 2, f" {name} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
-        elif name in ("OB", "Breaker"):
-            low = pattern.get("ob_low")
-            high = pattern.get("ob_high")
-            if low is None or high is None:
-                continue
-            fill_color, line_color, alpha = _ZONE_STYLE.get(name, ("#64748b", "#334155", 0.12))
-            ax.axhspan(low, high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
-            ax.axhline(low, color=line_color, linestyle="--", linewidth=0.8)
-            ax.axhline(high, color=line_color, linestyle="--", linewidth=0.8)
-            ax.text(n - 1, (low + high) / 2, f" {name} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
-        else:
-            level = pattern.get("level")
-            if level is None:
-                continue
-            color = _LEVEL_STYLE.get(name, "#334155")
-            ax.axhline(level, color=color, linewidth=1.0, alpha=0.75)
-            ax.text(n - 1, level, f" {name} ", ha="right", va="bottom", fontsize=6.5, color=color)
+        if pattern.pattern in {"FVG", "IFVG"} and pattern.gap_low is not None and pattern.gap_high is not None:
+            fill_color, line_color, alpha = _ZONE_STYLE.get(pattern.pattern, ("#64748b", "#334155", 0.12))
+            ax.axhspan(pattern.gap_low, pattern.gap_high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
+            ax.axhline(pattern.gap_low, color=line_color, linestyle="--", linewidth=0.8)
+            ax.axhline(pattern.gap_high, color=line_color, linestyle="--", linewidth=0.8)
+            ax.text(n - 1, (pattern.gap_low + pattern.gap_high) / 2, f" {pattern.pattern} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
+            continue
+
+        if pattern.pattern in {"OB", "Breaker"} and pattern.ob_low is not None and pattern.ob_high is not None:
+            fill_color, line_color, alpha = _ZONE_STYLE.get(pattern.pattern, ("#64748b", "#334155", 0.12))
+            ax.axhspan(pattern.ob_low, pattern.ob_high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
+            ax.axhline(pattern.ob_low, color=line_color, linestyle="--", linewidth=0.8)
+            ax.axhline(pattern.ob_high, color=line_color, linestyle="--", linewidth=0.8)
+            ax.text(n - 1, (pattern.ob_low + pattern.ob_high) / 2, f" {pattern.pattern} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
+            continue
+
+        if pattern.level is None:
+            continue
+        color = _LEVEL_STYLE.get(pattern.pattern, "#334155")
+        ax.axhline(pattern.level, color=color, linewidth=1.0, alpha=0.75)
+        ax.text(n - 1, pattern.level, f" {pattern.pattern} ", ha="right", va="bottom", fontsize=6.5, color=color)
 
 
-def _draw_setup(ax, pattern: dict, n: int):
-    name = pattern.get("pattern", "")
-    low = pattern.get("entry_low")
-    high = pattern.get("entry_high")
-    invalidation = pattern.get("invalidation")
-    sweep_level = pattern.get("sweep_level")
-    structure_level = pattern.get("structure_level")
-    if low is None or high is None:
+def _draw_setup(ax, pattern: AlertPayload, n: int) -> None:
+    if pattern.entry_low is None or pattern.entry_high is None:
         return
 
-    fill_color, line_color, alpha = _ZONE_STYLE.get(name, ("#0f766e", "#0f766e", 0.16))
-    ax.axhspan(low, high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
-    ax.axhline(low, color=line_color, linestyle="--", linewidth=1.0)
-    ax.axhline(high, color=line_color, linestyle="--", linewidth=1.0)
-    ax.text(n - 1, (low + high) / 2, f" {name} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
+    fill_color, line_color, alpha = _ZONE_STYLE.get(pattern.pattern, ("#0f766e", "#0f766e", 0.16))
+    ax.axhspan(pattern.entry_low, pattern.entry_high, color=fill_color, alpha=alpha, zorder=1, linewidth=0)
+    ax.axhline(pattern.entry_low, color=line_color, linestyle="--", linewidth=1.0)
+    ax.axhline(pattern.entry_high, color=line_color, linestyle="--", linewidth=1.0)
+    ax.text(n - 1, (pattern.entry_low + pattern.entry_high) / 2, f" {pattern.pattern} ", ha="right", va="center", color="white", fontsize=6.5, backgroundcolor=line_color)
 
-    if invalidation is not None:
-        ax.axhline(invalidation, color="#991b1b", linestyle=":", linewidth=1.0)
-        ax.text(n - 1, invalidation, " invalidation ", ha="right", va="top", fontsize=6.0, color="#991b1b")
-    if sweep_level is not None:
-        ax.axhline(sweep_level, color="#ea580c", linestyle="-.", linewidth=0.9, alpha=0.7)
-    if structure_level is not None:
-        ax.axhline(structure_level, color="#0f766e", linestyle="-.", linewidth=0.9, alpha=0.7)
+    if pattern.invalidation is not None:
+        ax.axhline(pattern.invalidation, color="#991b1b", linestyle=":", linewidth=1.0)
+        ax.text(n - 1, pattern.invalidation, " invalidation ", ha="right", va="top", fontsize=6.0, color="#991b1b")
+    if pattern.sweep_level is not None:
+        ax.axhline(pattern.sweep_level, color="#ea580c", linestyle="-.", linewidth=0.9, alpha=0.7)
+    if pattern.structure_level is not None:
+        ax.axhline(pattern.structure_level, color="#0f766e", linestyle="-.", linewidth=0.9, alpha=0.7)
 
 
-def _draw_price_label(ax, df: pd.DataFrame):
-    last_close = df["Close"].iloc[-1]
-    is_up = df["Close"].iloc[-1] >= df["Open"].iloc[-1]
+def _draw_price_label(ax, frame: pd.DataFrame) -> None:
+    last_close = frame["Close"].iloc[-1]
+    is_up = frame["Close"].iloc[-1] >= frame["Open"].iloc[-1]
     color = "#0f766e" if is_up else "#9f1239"
     ax.annotate(
         f" {last_close:,.1f} ",
-        xy=(len(df) - 0.5, last_close),
+        xy=(len(frame) - 0.5, last_close),
         ha="left",
         va="center",
         fontsize=8,
@@ -138,9 +127,9 @@ def _draw_price_label(ax, df: pd.DataFrame):
     )
 
 
-def _render(df: pd.DataFrame, patterns: list[dict], symbol: str, timeframe: str) -> io.BytesIO:
+def _render(frame: pd.DataFrame, patterns: list[AlertPayload], symbol: str, timeframe: str) -> io.BytesIO:
     fig, axes = mpf.plot(
-        df,
+        frame,
         type="candle",
         style=_STYLE,
         volume=True,
@@ -154,26 +143,39 @@ def _render(df: pd.DataFrame, patterns: list[dict], symbol: str, timeframe: str)
         scale_padding={"left": 0.1, "right": 1.2, "top": 0.3, "bottom": 0.5},
     )
     ax = axes[0]
-    if patterns:
-        _draw_patterns(ax, patterns, df)
-    _draw_price_label(ax, df)
-    ax.set_title(f"{symbol}  ·  {timeframe}", loc="left", fontsize=10, color="#334155", pad=8)
+    visible_patterns = visible_alerts_for_chart(
+        [
+            {
+                "low": float(row["Low"]),
+                "high": float(row["High"]),
+            }
+            for _, row in frame.iterrows()
+        ],
+        patterns,
+    )
+    if visible_patterns:
+        _draw_patterns(ax, visible_patterns, len(frame))
+    _draw_price_label(ax, frame)
+    ax.set_title(f"{symbol}  {timeframe}", loc="left", fontsize=10, color="#334155", pad=8)
     ax.set_ylabel("")
     axes[2].set_ylabel("")
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
-    buf.seek(0)
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
+    buffer.seek(0)
     plt.close(fig)
-    return buf
+    return buffer
 
 
-async def generate_chart(candles: list, patterns: list, symbol: str, timeframe: str) -> io.BytesIO | None:
+async def generate_chart(candles: list[dict], patterns: list[AlertPayload], symbol: str, timeframe: str) -> io.BytesIO | None:
     if not candles:
         return None
     try:
-        df = _to_df(candles, timeframe)
-        return await asyncio.to_thread(_render, df, patterns, symbol, timeframe)
+        frame = _to_df(candles, timeframe)
+        return await asyncio.to_thread(_render, frame, patterns or [], symbol, timeframe)
     except Exception as exc:
         logger.error("generate_chart %s %s: %s", symbol, timeframe, exc)
         return None
+
+
+__all__ = ["generate_chart"]

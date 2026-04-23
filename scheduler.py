@@ -1,186 +1,123 @@
-"""
-scheduler.py — production orchestration layer
+"""Production task orchestration."""
+from __future__ import annotations
 
-Responsibilities:
-  - Startup config validation (fail fast, not silently)
-  - Managed task lifecycle with auto-restart on crash
-  - Graceful shutdown with cleanup
-  - Health logging every N minutes
-  - Single source of truth for what's running
-"""
 import asyncio
 import logging
 import signal
 from datetime import datetime, timezone
-from typing import Callable, Coroutine, Any
+from typing import Any, Callable, Coroutine
 
 from telegram.ext import Application
 
-from config import TELEGRAM_BOT_TOKEN, CHANNEL_ID, CRYPTOBOT_TOKEN, OWNER_IDS
-from health import start_health_server, record_error
+from config import CHANNEL_ID, CRYPTOBOT_TOKEN, OWNER_IDS, TELEGRAM_BOT_TOKEN
+from health import record_error, start_health_server
 
 logger = logging.getLogger(__name__)
 
-# ── Task registry: name → asyncio.Task
 _tasks: dict[str, asyncio.Task] = {}
+_RESTART_DELAY = 10
+_HEALTH_LOG_INTERVAL = 300
 
-# ── Restart config per task
-_RESTART_DELAY  = 10   # seconds before restarting a crashed task
-_HEALTH_LOG_INT = 300  # log health summary every 5 minutes
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  CONFIG VALIDATION
-# ══════════════════════════════════════════════════════════════════════════════
 
 class ConfigError(RuntimeError):
-    pass
+    """Raised when required runtime configuration is missing."""
 
 
-def validate_config():
-    """
-    Check all required config at startup.
-    Raises ConfigError immediately — never silently continue with bad config.
-    """
-    errors   = []
-    warnings = []
+def validate_config() -> None:
+    errors: list[str] = []
+    warnings: list[str] = []
 
     if not TELEGRAM_BOT_TOKEN:
         errors.append("TELEGRAM_BOT_TOKEN is not set")
-
     if not OWNER_IDS:
-        warnings.append("OWNER_IDS is empty — no owner will have free access")
-
+        warnings.append("OWNER_IDS is empty; no owner will have free access")
     if not CRYPTOBOT_TOKEN:
-        warnings.append(
-            "CRYPTOBOT_TOKEN is not set — payment system disabled. "
-            "Bot will run but subscriptions cannot be created."
-        )
-
+        warnings.append("CRYPTOBOT_TOKEN is not set; payments are disabled")
     if not CHANNEL_ID:
-        warnings.append(
-            "CHANNEL_ID is not set — classic TA channel alerts disabled."
-        )
+        warnings.append("CHANNEL_ID is not set; classic channel alerts are disabled")
 
-    for w in warnings:
-        logger.warning(f"Config warning: {w}")
-
+    for warning in warnings:
+        logger.warning("Config warning: %s", warning)
     if errors:
-        for e in errors:
-            logger.critical(f"Config error: {e}")
-        raise ConfigError(
-            f"Bot cannot start — fix these config errors: {'; '.join(errors)}"
-        )
+        for error in errors:
+            logger.critical("Config error: %s", error)
+        raise ConfigError("Bot cannot start: " + "; ".join(errors))
 
     logger.info("Config validation passed")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  MANAGED TASK — auto-restart on crash
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _managed_task(
     name: str,
     coro_factory: Callable[[], Coroutine[Any, Any, None]],
+    *,
     restart: bool = True,
-):
-    """
-    Runs a coroutine. If it crashes and restart=True, waits _RESTART_DELAY
-    seconds and restarts it. Logs every crash clearly.
-    """
+) -> None:
     while True:
-        logger.info(f"[{name}] starting")
+        logger.info("[%s] starting", name)
         try:
             await coro_factory()
-            # Coroutine returned normally (shouldn't happen for infinite loops)
-            logger.warning(f"[{name}] exited normally — expected infinite loop")
+            logger.warning("[%s] exited normally; expected a long-running task", name)
         except asyncio.CancelledError:
-            logger.info(f"[{name}] cancelled")
+            logger.info("[%s] cancelled", name)
             return
-        except Exception as e:
+        except Exception as exc:
             record_error()
-            logger.error(f"[{name}] crashed: {e}", exc_info=True)
+            logger.error("[%s] crashed: %s", name, exc, exc_info=True)
 
         if not restart:
-            logger.info(f"[{name}] not restarting (restart=False)")
+            logger.info("[%s] not restarting", name)
             return
 
-        logger.info(f"[{name}] restarting in {_RESTART_DELAY}s")
+        logger.info("[%s] restarting in %ss", name, _RESTART_DELAY)
         await asyncio.sleep(_RESTART_DELAY)
 
 
-def _spawn(name: str, coro_factory: Callable, restart: bool = True):
-    task = asyncio.create_task(
-        _managed_task(name, coro_factory, restart),
-        name=name,
-    )
+def _spawn(name: str, coro_factory: Callable[[], Coroutine[Any, Any, None]], *, restart: bool = True) -> asyncio.Task:
+    task = asyncio.create_task(_managed_task(name, coro_factory, restart=restart), name=name)
     _tasks[name] = task
     return task
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  HEALTH LOGGER
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def _health_logger():
+async def _health_logger() -> None:
     while True:
-        await asyncio.sleep(_HEALTH_LOG_INT)
-        alive  = [n for n, t in _tasks.items() if not t.done()]
-        dead   = [n for n, t in _tasks.items() if t.done()]
-        now    = datetime.now(timezone.utc).strftime("%H:%M UTC")
-        logger.info(
-            f"[health] {now} | "
-            f"tasks alive: {alive} | "
-            f"tasks dead: {dead if dead else 'none'}"
-        )
+        await asyncio.sleep(_HEALTH_LOG_INTERVAL)
+        alive = [name for name, task in _tasks.items() if not task.done()]
+        dead = [name for name, task in _tasks.items() if task.done()]
+        now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        logger.info("[health] %s | alive=%s | dead=%s", now, alive, dead or "none")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  GRACEFUL SHUTDOWN
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def _shutdown():
-    logger.info("Shutdown requested — cancelling all tasks")
+async def _shutdown() -> None:
+    logger.info("Shutdown requested; cancelling all tasks")
     for name, task in _tasks.items():
-        if not task.done():
-            task.cancel()
-            logger.info(f"Cancelled: {name}")
-    # Wait for all cancellations to complete
+        if task.done():
+            continue
+        task.cancel()
+        logger.info("Cancelled: %s", name)
     await asyncio.gather(*_tasks.values(), return_exceptions=True)
-    logger.info("All tasks stopped — shutdown complete")
+    logger.info("Shutdown complete")
 
 
-def _install_signal_handlers():
+def _install_signal_handlers() -> None:
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler
             pass
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  ENTRY POINT
-# ══════════════════════════════════════════════════════════════════════════════
-
-async def post_init(application: Application):
-    """Called by python-telegram-bot after bot is initialised."""
-
-    # 1. Validate config — raises ConfigError if broken
+async def post_init(application: Application) -> None:
+    """Initialize managed background tasks after Telegram app startup."""
     validate_config()
-
-    # 2. Install OS signal handlers for graceful shutdown
     _install_signal_handlers()
 
-    # 3. Import here to avoid circular imports at module level
     from alerts import scanner_loop
     from classic_scanner import channel_scheduler
-    from sessions_scheduler import session_scheduler
     from database import get_session_alert_users
+    from sessions_scheduler import session_scheduler
 
-    # 4. Spawn managed tasks
-    _spawn("scanner",       lambda: scanner_loop(application))
+    _spawn("scanner", lambda: scanner_loop(application))
     _spawn("health_server", lambda: start_health_server(port=8080), restart=False)
     _spawn("health_logger", _health_logger)
 
@@ -193,13 +130,15 @@ async def post_init(application: Application):
             application.bot,
             subscribers_fn=get_session_alert_users,
             channel_id=CHANNEL_ID,
-        )
+        ),
     )
 
-    # 5. Log startup summary
     logger.info(
-        f"Orchestrator started | "
-        f"tasks: {list(_tasks.keys())} | "
-        f"channel: {'enabled' if CHANNEL_ID else 'disabled'} | "
-        f"payments: {'enabled' if CRYPTOBOT_TOKEN else 'DISABLED'}"
+        "Orchestrator started | tasks=%s | channel=%s | payments=%s",
+        list(_tasks.keys()),
+        "enabled" if CHANNEL_ID else "disabled",
+        "enabled" if CRYPTOBOT_TOKEN else "disabled",
     )
+
+
+__all__ = ["ConfigError", "post_init", "validate_config"]

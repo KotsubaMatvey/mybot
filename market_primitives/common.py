@@ -7,6 +7,8 @@ from typing import Any, Literal, TypedDict
 Direction = Literal["bullish", "bearish"]
 SwingDirection = Literal["high", "low"]
 StructureType = Literal["BOS", "CHOCH"]
+PDKind = Literal["premium", "discount", "ote_premium", "ote_discount"]
+VolumeSignalType = Literal["spike", "profile"]
 
 
 class Candle(TypedDict):
@@ -118,6 +120,67 @@ class BreakerBlock:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class EqualLiquidityLevel:
+    symbol: str
+    timeframe: str
+    direction: Direction
+    timestamp: int
+    level: float
+    touches: int
+    tolerance: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class KeyLevel:
+    symbol: str
+    timeframe: str
+    direction: Direction
+    timestamp: int
+    level: float
+    touches: int
+    bias: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class VolumeSignal:
+    symbol: str
+    timeframe: str
+    signal_type: VolumeSignalType
+    direction: Direction
+    timestamp: int
+    level: float
+    magnitude: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class PDZone:
+    symbol: str
+    timeframe: str
+    kind: PDKind
+    timestamp: int
+    equilibrium: float
+    zone_low: float
+    zone_high: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SMTDivergence:
+    symbol: str
+    timeframe: str
+    direction: Direction
+    timestamp: int
+    primary_level: float
+    secondary_symbol: str
+    secondary_level: float
+    strength: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 def ts_utc(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime("%H:%M")
 
@@ -137,7 +200,7 @@ def candle_range(candle: Candle) -> float:
 def average_range(candles: list[Candle]) -> float:
     if not candles:
         return 0.0
-    return sum(candle_range(c) for c in candles) / len(candles)
+    return sum(candle_range(candle) for candle in candles) / len(candles)
 
 
 def range_threshold(candles: list[Candle], fraction: float = 0.30) -> float:
@@ -145,10 +208,10 @@ def range_threshold(candles: list[Candle], fraction: float = 0.30) -> float:
 
 
 def normalized_zone_width(low: float, high: float) -> float:
-    mid = (low + high) / 2
-    if mid <= 0:
+    midpoint = (low + high) / 2
+    if midpoint <= 0:
         return 0.0
-    return abs(high - low) / mid
+    return abs(high - low) / midpoint
 
 
 def zone_overlap(a_low: float, a_high: float, b_low: float, b_high: float) -> float:
@@ -183,13 +246,13 @@ def collect_swings(
     highs: list[SwingPoint] = []
     lows: list[SwingPoint] = []
 
-    for idx in range(left, len(candles) - right):
-        mid = candles[idx]
+    for index in range(left, len(candles) - right):
+        mid = candles[index]
         if candle_range(mid) < min_range:
             continue
 
-        left_slice = candles[idx - left : idx]
-        right_slice = candles[idx + 1 : idx + 1 + right]
+        left_slice = candles[index - left : index]
+        right_slice = candles[index + 1 : index + 1 + right]
         neighbors = left_slice + right_slice
 
         if all(mid["high"] > candle["high"] for candle in neighbors):
@@ -199,7 +262,7 @@ def collect_swings(
                     timeframe=timeframe,
                     direction="high",
                     timestamp=mid["time"],
-                    index=idx,
+                    index=index,
                     level=mid["high"],
                     range_size=candle_range(mid),
                 )
@@ -211,7 +274,7 @@ def collect_swings(
                     timeframe=timeframe,
                     direction="low",
                     timestamp=mid["time"],
-                    index=idx,
+                    index=index,
                     level=mid["low"],
                     range_size=candle_range(mid),
                 )
@@ -244,15 +307,23 @@ __all__ = [
     "BreakerBlock",
     "Candle",
     "Direction",
+    "EqualLiquidityLevel",
     "FairValueGap",
     "InvertedFVG",
+    "KeyLevel",
     "LiquiditySweep",
     "OrderBlock",
+    "PDKind",
+    "PDZone",
+    "SMTDivergence",
     "StructureBreak",
     "StructureType",
     "SwingDirection",
     "SwingPoint",
+    "VolumeSignal",
+    "VolumeSignalType",
     "average_range",
+    "candle_range",
     "cluster_levels",
     "collect_swings",
     "fmt_price",

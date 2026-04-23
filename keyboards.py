@@ -3,15 +3,30 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
+MENU_ACTIONS = {
+    "zones": "ZONES",
+    "status": "STATUS",
+    "settings": "SETTINGS",
+    "sessions": "SESSIONS",
+    "charts": "CHARTS",
+    "stop": "STOP",
+    "resume": "RESUME",
+    "help": "HELP",
+}
+
 
 def main_menu() -> ReplyKeyboardMarkup:
-    kb = [
-        [KeyboardButton("▪ ZONES"), KeyboardButton("◎ STATUS")],
-        [KeyboardButton("◉ SETTINGS"), KeyboardButton("◷ SESSIONS"), KeyboardButton("▤ CHARTS")],
-        [KeyboardButton("■ STOP"), KeyboardButton("▶ RESUME")],
-        [KeyboardButton("? HELP")],
+    keyboard = [
+        [KeyboardButton(MENU_ACTIONS["zones"]), KeyboardButton(MENU_ACTIONS["status"])],
+        [
+            KeyboardButton(MENU_ACTIONS["settings"]),
+            KeyboardButton(MENU_ACTIONS["sessions"]),
+            KeyboardButton(MENU_ACTIONS["charts"]),
+        ],
+        [KeyboardButton(MENU_ACTIONS["stop"]), KeyboardButton(MENU_ACTIONS["resume"])],
+        [KeyboardButton(MENU_ACTIONS["help"])],
     ]
-    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
 def build_toggle_keyboard(items, selected, prefix) -> InlineKeyboardMarkup:
@@ -39,3 +54,12 @@ def payment_keyboard(pay_url: str, invoice_id: int, price) -> InlineKeyboardMark
             [InlineKeyboardButton("Check Payment", callback_data=f"check_pay_{invoice_id}")],
         ]
     )
+
+
+__all__ = [
+    "MENU_ACTIONS",
+    "build_toggle_keyboard",
+    "confirm_stop_keyboard",
+    "main_menu",
+    "payment_keyboard",
+]

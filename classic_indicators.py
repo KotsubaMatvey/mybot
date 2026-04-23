@@ -1,23 +1,17 @@
-"""
-classic_indicators.py — RSI, pattern detection, orderbook analysis.
-Pure functions — no I/O, no side effects.
-"""
-from datetime import datetime, timezone
+"""Pure helpers for the classic TA channel scanner."""
+from __future__ import annotations
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  RSI
-# ══════════════════════════════════════════════════════════════════════════════
-
-def calc_rsi(candles: list, period: int = 14) -> float | None:
+def calc_rsi(candles: list[dict], period: int = 14) -> float | None:
     if len(candles) < period + 1:
         return None
-    closes = [c["close"] for c in candles[-(period + 1):]]
-    gains, losses = [], []
-    for i in range(1, len(closes)):
-        diff = closes[i] - closes[i - 1]
-        gains.append(max(diff, 0))
-        losses.append(max(-diff, 0))
+    closes = [candle["close"] for candle in candles[-(period + 1) :]]
+    gains: list[float] = []
+    losses: list[float] = []
+    for index in range(1, len(closes)):
+        diff = closes[index] - closes[index - 1]
+        gains.append(max(diff, 0.0))
+        losses.append(max(-diff, 0.0))
     avg_gain = sum(gains) / period
     avg_loss = sum(losses) / period
     if avg_loss == 0:
@@ -26,11 +20,14 @@ def calc_rsi(candles: list, period: int = 14) -> float | None:
 
 
 def rsi_state(rsi: float) -> tuple[str, str]:
-    """Returns (label, direction). direction: bullish | bearish | neutral."""
-    if rsi >= 80: return "Strongly overbought", "bearish"
-    if rsi >= 70: return "Slightly overbought", "bearish"
-    if rsi <= 20: return "Strongly oversold",   "bullish"
-    if rsi <= 30: return "Slightly oversold",   "bullish"
+    if rsi >= 80:
+        return "Strongly overbought", "bearish"
+    if rsi >= 70:
+        return "Slightly overbought", "bearish"
+    if rsi <= 20:
+        return "Strongly oversold", "bullish"
+    if rsi <= 30:
+        return "Slightly oversold", "bullish"
     return "Neutral", "neutral"
 
 
@@ -38,106 +35,92 @@ def rsi_is_extreme(rsi: float) -> bool:
     return rsi <= 30 or rsi >= 70
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  CANDLE PATTERN DETECTION
-# ══════════════════════════════════════════════════════════════════════════════
-
-def detect_pattern(candles: list) -> tuple[str, str] | None:
-    """
-    Returns (pattern_name, direction) or None.
-    Checks the second-to-last closed candle (candles[-2]).
-    Patterns: Pinbar, Predict (engulfing), Doji.
-    """
+def detect_pattern(candles: list[dict]) -> tuple[str, str] | None:
+    """Return (pattern_name, direction) for the last closed candle."""
     if len(candles) < 3:
         return None
 
-    c = candles[-2]  # last closed candle
-    p = candles[-3]  # previous candle
-
-    body = abs(c["close"] - c["open"])
-    rng  = c["high"] - c["low"]
-    if rng == 0:
+    candle = candles[-2]
+    previous = candles[-3]
+    body = abs(candle["close"] - candle["open"])
+    range_size = candle["high"] - candle["low"]
+    if range_size == 0:
         return None
 
-    ratio = body / rng
-    uw    = c["high"] - max(c["close"], c["open"])  # upper wick
-    lw    = min(c["close"], c["open"]) - c["low"]   # lower wick
+    body_ratio = body / range_size
+    upper_wick = candle["high"] - max(candle["close"], candle["open"])
+    lower_wick = min(candle["close"], candle["open"]) - candle["low"]
 
-    # Pinbar — small body, dominant wick
-    if ratio < 0.35:
-        if lw > body * 2 and lw > uw * 2:
+    if body_ratio < 0.35:
+        if lower_wick > body * 2 and lower_wick > upper_wick * 2:
             return "Pinbar", "bullish"
-        if uw > body * 2 and uw > lw * 2:
+        if upper_wick > body * 2 and upper_wick > lower_wick * 2:
             return "Pinbar", "bearish"
 
-    # Predict (engulfing) — current body > 1.5x previous body
-    prev_body = abs(p["close"] - p["open"])
-    if body > prev_body * 1.5:
-        if c["close"] > c["open"] and p["close"] < p["open"]:
+    previous_body = abs(previous["close"] - previous["open"])
+    if body > previous_body * 1.5:
+        if candle["close"] > candle["open"] and previous["close"] < previous["open"]:
             return "Predict", "bullish"
-        if c["close"] < c["open"] and p["close"] > p["open"]:
+        if candle["close"] < candle["open"] and previous["close"] > previous["open"]:
             return "Predict", "bearish"
 
-    # Doji — nearly no body
-    if ratio < 0.1:
+    if body_ratio < 0.1:
         return "Predict", "neutral"
-
     return None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  ORDERBOOK ANALYSIS
-# ══════════════════════════════════════════════════════════════════════════════
-
-def analyze_ob(ob: dict, price: float) -> dict:
-    """
-    Analyze orderbook around current price.
-    Returns support/resistance zones and dominant side.
-    """
-    bids = ob.get("bids", [])
-    asks = ob.get("asks", [])
+def analyze_ob(orderbook: dict, price: float) -> dict:
+    bids = orderbook.get("bids", [])
+    asks = orderbook.get("asks", [])
     if not bids or not asks:
-        return {"dominant": "neutral", "source": ob.get("source", "BINANCE"),
-                "support": (0.0, 0.0, 0.0), "resistance": (0.0, 0.0, 0.0)}
+        return {
+            "dominant": "neutral",
+            "source": orderbook.get("source", "BINANCE"),
+            "support": (0.0, 0.0, 0.0),
+            "resistance": (0.0, 0.0, 0.0),
+        }
 
-    zone = price * 0.01   # 1% zone around price
-    wide = price * 0.02   # 2% zone for dominance check
-
-    sup_qty = round(sum(q for p, q in bids if price - zone <= p <= price), 1)
-    res_qty = round(sum(q for p, q in asks if price <= p <= price + zone), 1)
-
-    total_b = sum(q for p, q in bids if p >= price - wide)
-    total_a = sum(q for p, q in asks if p <= price + wide)
-    dominant = "bids" if total_b >= total_a else "asks"
+    zone = price * 0.01
+    wide = price * 0.02
+    support_qty = round(sum(quantity for p, quantity in bids if price - zone <= p <= price), 1)
+    resistance_qty = round(sum(quantity for p, quantity in asks if price <= p <= price + zone), 1)
+    total_bids = sum(quantity for p, quantity in bids if p >= price - wide)
+    total_asks = sum(quantity for p, quantity in asks if p <= price + wide)
+    dominant = "bids" if total_bids >= total_asks else "asks"
 
     return {
-        "dominant":   dominant,
-        "source":     ob.get("source", "BINANCE"),
-        "support":    (round(price - zone, 1), round(price, 1), sup_qty),
-        "resistance": (round(price, 1), round(price + zone, 1), res_qty),
+        "dominant": dominant,
+        "source": orderbook.get("source", "BINANCE"),
+        "support": (round(price - zone, 1), round(price, 1), support_qty),
+        "resistance": (round(price, 1), round(price + zone, 1), resistance_qty),
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  SL / TP CALCULATION
-# ══════════════════════════════════════════════════════════════════════════════
-
-def compute_sl_tp(candles: list, direction: str, price: float) -> tuple:
+def compute_sl_tp(candles: list[dict], direction: str, price: float) -> tuple[float, float, float, float]:
     lookback = candles[-20:]
-    hi  = max(c["high"] for c in lookback)
-    lo  = min(c["low"]  for c in lookback)
-    rng = hi - lo
+    high = max(candle["high"] for candle in lookback)
+    low = min(candle["low"] for candle in lookback)
+    range_size = high - low
     if direction == "bullish":
         return (
-            round(lo - rng * 0.015, 2),
-            round(price + rng * 0.25, 2),
-            round(price + rng * 0.50, 2),
-            round(price + rng * 0.85, 2),
+            round(low - range_size * 0.015, 2),
+            round(price + range_size * 0.25, 2),
+            round(price + range_size * 0.50, 2),
+            round(price + range_size * 0.85, 2),
         )
-    else:
-        return (
-            round(hi + rng * 0.015, 2),
-            round(price - rng * 0.25, 2),
-            round(price - rng * 0.50, 2),
-            round(price - rng * 0.85, 2),
-        )
+    return (
+        round(high + range_size * 0.015, 2),
+        round(price - range_size * 0.25, 2),
+        round(price - range_size * 0.50, 2),
+        round(price - range_size * 0.85, 2),
+    )
+
+
+__all__ = [
+    "analyze_ob",
+    "calc_rsi",
+    "compute_sl_tp",
+    "detect_pattern",
+    "rsi_is_extreme",
+    "rsi_state",
+]

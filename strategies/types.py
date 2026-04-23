@@ -5,12 +5,17 @@ from typing import Any, Literal, TypedDict
 
 from market_primitives.common import (
     BreakerBlock,
+    EqualLiquidityLevel,
     FairValueGap,
     InvertedFVG,
+    KeyLevel,
     LiquiditySweep,
     OrderBlock,
+    PDZone,
+    SMTDivergence,
     StructureBreak,
     SwingPoint,
+    VolumeSignal,
 )
 
 SetupDirection = Literal["long", "short"]
@@ -38,7 +43,12 @@ class PrimitiveSnapshot:
     ifvgs: list[InvertedFVG] = field(default_factory=list)
     order_blocks: list[OrderBlock] = field(default_factory=list)
     breaker_blocks: list[BreakerBlock] = field(default_factory=list)
-    key_levels: list[float] = field(default_factory=list)
+    equal_highs: list[EqualLiquidityLevel] = field(default_factory=list)
+    equal_lows: list[EqualLiquidityLevel] = field(default_factory=list)
+    key_levels: list[KeyLevel] = field(default_factory=list)
+    volume_signals: list[VolumeSignal] = field(default_factory=list)
+    pd_zones: list[PDZone] = field(default_factory=list)
+    smt_divergences: list[SMTDivergence] = field(default_factory=list)
 
 
 @dataclass(slots=True)

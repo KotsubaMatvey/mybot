@@ -1,68 +1,89 @@
-# Trillion Strategy Alert Bot
+# ICT Telegram Trading Bot
 
-ICT pattern scanner + classic TA channel alerts for Telegram.
+Python Telegram bot for Binance Futures market analysis.
 
 ## Architecture
 
+```text
+bot.py
+
+handlers/
+  __init__.py
+  callbacks.py
+  charts.py
+  common.py
+  core.py
+  sessions.py
+
+market_primitives/
+  common.py
+  liquidity.py
+  structure.py
+  fvg.py
+  ifvg.py
+  order_blocks.py
+  levels.py
+  volume.py
+  pd.py
+  smt.py
+
+strategies/
+  types.py
+  scoring.py
+  formatter.py
+  entry_model_1.py
+  entry_model_2.py
+  entry_model_3.py
+
+scanner/
+  __init__.py
+  engine.py
+  snapshots.py
+  cache.py
+  dedup.py
+  confluence.py
+  scoring.py
+
+presentation/
+  types.py
+  alert_builders.py
+  chart_payloads.py
+  formatters.py
 ```
-bot.py              — main bot, commands, onboarding, scanner loop
-scanner.py          — ICT pattern detection (FVG, OB, BOS, CHoCH, Swings, Sweeps)
-classic_scanner.py  — classic TA channel alerts (RSI, orderbook, candle patterns)
-interpret.py        — market interpretation module
-database.py         — SQLite user storage, subscriptions
-payments.py         — CryptoBot payment integration
-config.py           — configuration via environment variables
-```
+
+## Features
+
+- typed market primitives: swings, sweeps, BOS/CHOCH, FVG/IFVG, OB/breakers, EQH/EQL, PD, SMT, volume
+- typed entry setups: Entry Model 1, Entry Model 2, Entry Model 3
+- Telegram alerts with optional chart overlays
+- onboarding with primitive/model/direction preferences
+- SQLite persistence for subscriptions and user settings
+- classic channel alerts kept separately from ICT setup engine
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
+1. Create `.env` with your bot and payment credentials.
 2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run:
+3. Start the bot:
 
 ```bash
 python bot.py
 ```
 
-## Environment Variables
+## Required Environment
 
-| Variable | Description |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
-| `CRYPTOBOT_TOKEN` | Token from @CryptoBot (for payments) |
-| `OWNER_IDS` | Comma-separated Telegram user IDs with lifetime access |
-| `CHANNEL_ID` | Telegram channel ID for classic TA alerts |
+- `TELEGRAM_BOT_TOKEN`
+- `CRYPTOBOT_TOKEN`
+- `OWNER_IDS`
+- `CHANNEL_ID`
 
-## Channel Alerts (Trillion Strategy)
+## Verification
 
-Posts automatically on candle close for BTCUSDT and ETHUSDT:
-
-- **RSI alerts** — overbought/oversold grouped by symbol
-- **Pattern alerts** — Pinbar/Predict with orderbook analysis
-- **Setup alerts** — Scalp/Trend Long/Short with entry, SL, TP
-- **Bounce alerts** — possible bounce/pullback signals
-- **CME close** — weekly BTC CME futures close price
-
-## Bot Features
-
-- ICT pattern detection: FVG, IFVG, OB, BOS, CHoCH, Swings, Sweeps, Volume, PD zones
-- Signal quality rating ★☆☆☆☆ — ★★★★★
-- Per-user symbol, timeframe and pattern preferences
-- Monthly subscription via CryptoBot (crypto payments)
-- Owner lifetime access
-
-## Security
-
-- All secrets stored in `.env` file
-- `.env` is excluded from git via `.gitignore`
-- Never commit real tokens to the repository
+- `python -m compileall .`
+- `python offline_smoke_test.py`
+- `python offline_backtest.py`

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import database
 import handlers
+import handlers.charts as handler_charts
 import onboarding
 import payment_flow
 
@@ -97,10 +98,10 @@ async def main():
     tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     original_db_path = database.DB_PATH
     original_send_payment_screen = payment_flow.send_payment_screen
-    original_get_cached_candles = handlers.get_cached_candles
-    original_get_cached_patterns = handlers.get_cached_patterns
-    original_generate_chart = handlers.generate_chart
-    original_get_user = handlers.get_user
+    original_get_cached_candles = handler_charts.get_cached_candles
+    original_get_cached_patterns = handler_charts.get_cached_patterns
+    original_generate_chart = handler_charts.generate_chart
+    original_get_user = handler_charts.get_user
 
     results = []
     try:
@@ -149,14 +150,14 @@ async def main():
         results.append(("payment_outdated_invoice", consumed and query.answers and "outdated" in (query.answers[-1][0] or "").lower()))
 
         # Scenario 5: chart callback with missing user state should not crash.
-        handlers.get_cached_candles = lambda symbol, tf: sample_candles()
-        handlers.get_cached_patterns = lambda symbol, tf: [{"pattern": "BOS", "direction": "Bullish", "level": 101.0, "detail": "demo"}]
+        handler_charts.get_cached_candles = lambda symbol, tf: sample_candles()
+        handler_charts.get_cached_patterns = lambda symbol, tf: []
 
         async def fake_generate_chart(candles, patterns, symbol, tf):
             return io.BytesIO(b"fake-chart")
 
-        handlers.generate_chart = fake_generate_chart
-        handlers.get_user = lambda user_id: None
+        handler_charts.generate_chart = fake_generate_chart
+        handler_charts.get_user = lambda user_id: None
 
         update = SimpleNamespace(
             callback_query=DummyCallbackQuery("chart_BTCUSDT_1h", from_user=SimpleNamespace(id=404))
@@ -169,10 +170,10 @@ async def main():
     finally:
         database.DB_PATH = original_db_path
         payment_flow.send_payment_screen = original_send_payment_screen
-        handlers.get_cached_candles = original_get_cached_candles
-        handlers.get_cached_patterns = original_get_cached_patterns
-        handlers.generate_chart = original_generate_chart
-        handlers.get_user = original_get_user
+        handler_charts.get_cached_candles = original_get_cached_candles
+        handler_charts.get_cached_patterns = original_get_cached_patterns
+        handler_charts.generate_chart = original_generate_chart
+        handler_charts.get_user = original_get_user
         tmpdir.cleanup()
 
     passed = sum(1 for _, ok in results if ok)
