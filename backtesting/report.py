@@ -69,6 +69,10 @@ def _write_report_md(
         f"- cooldown_bars: {config.get('cooldown_bars')}",
         f"- start: {config.get('start') or 'full history'}",
         f"- end: {config.get('end') or 'full history'}",
+        f"- htf_mode: {config.get('htf_mode', 'strict')}",
+        f"- execution_pairs: {config.get('execution_pairs')}",
+        f"- model_3_htf_map: {config.get('model_3_htf_map')}",
+        f"- model_3_ltf_map: {config.get('model_3_ltf_map')}",
         f"- generated_at: {generated_at}",
         "",
         "This is an event-study backtest. It does not model fees, slippage, partial exits, breakeven, or full execution management.",
@@ -90,7 +94,20 @@ def _write_report_md(
         "## 5. Score bucket analysis",
         _markdown_table(summaries.get("summary_by_score", [])),
         "",
-        "## 6. Warnings / skipped events",
+        "## 6. HTF Context Analysis",
+        "### Events by HTF bias",
+        _markdown_table(summaries.get("summary_by_htf_bias", [])),
+        "",
+        "### Performance by HTF location",
+        _markdown_table(summaries.get("summary_by_htf_location", [])),
+        "",
+        "### Performance by HTF zone type",
+        _markdown_table(summaries.get("summary_by_htf_zone", [])),
+        "",
+        "### Performance by HTF alignment",
+        _markdown_table(summaries.get("summary_by_model_htf_alignment", [])),
+        "",
+        "## 7. Warnings / skipped events",
     ]
     if warnings:
         lines.extend(f"- {item.model_name} {item.symbol} {item.timeframe} {item.timestamp}: {item.message}" for item in warnings[:50])
@@ -101,11 +118,14 @@ def _write_report_md(
     lines.extend(
         [
             "",
-            "## 7. Interpretation notes",
+            "## 8. Interpretation notes",
             "- Replay is bar-by-bar: strategies receive only candles visible at the current bar.",
             "- Forward candles are used only after event detection for outcome measurement.",
             "- `bars_to_*` values are 1-based future bar offsets from the signal bar.",
             "- `*_before_invalidation` uses OHLC bar ordering only; same-bar threshold/invalidation ordering is not modeled.",
+            "- HTF-filtered event studies should usually have fewer signals than legacy/off mode.",
+            "- If strict signal count does not decrease, HTF gating is too weak.",
+            "- If score buckets remain mostly high, scoring is not calibrated enough.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -137,6 +157,16 @@ def _empty_event_fieldnames() -> list[str]:
         "components_json",
         "warning",
         "skipped_reason",
+        "htf_bias",
+        "htf_confidence",
+        "htf_zone_type",
+        "htf_zone_low",
+        "htf_zone_high",
+        "htf_location",
+        "htf_allows_long",
+        "htf_allows_short",
+        "htf_objective_type",
+        "htf_objective_level",
         "forward_bars",
         "mfe",
         "mae",
@@ -166,6 +196,10 @@ def _summary_fieldnames(name: str, rows: list[SummaryRow]) -> list[str]:
         "summary_by_timeframe": ["model", "timeframe"],
         "summary_by_symbol": ["model", "symbol"],
         "summary_by_score": ["model", "score_bucket"],
+        "summary_by_htf_bias": ["model", "htf_bias"],
+        "summary_by_htf_zone": ["model", "htf_zone_type"],
+        "summary_by_htf_location": ["model", "htf_location"],
+        "summary_by_model_htf_alignment": ["model", "htf_alignment"],
     }
     return prefix_by_name.get(name, []) + [
         "count",

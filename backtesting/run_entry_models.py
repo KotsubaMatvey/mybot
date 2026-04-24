@@ -10,7 +10,7 @@ from backtesting.data import HistoricalDataError, find_history_file, load_candle
 from backtesting.metrics import build_all_summaries
 from backtesting.replay import ReplayWarning, normalize_model_key, replay_entry_models_multi_timeframe
 from backtesting.report import write_reports
-from scanner.engine import MODEL_3_HTF_MAP, MODEL_3_LTF_MAP
+from timeframes import EXECUTION_HTF_MAP, MODEL_3_HTF_MAP, MODEL_3_LTF_MAP, SUPPORTED_TIMEFRAMES, execution_htf_for
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
             symbols=args.symbols,
             timeframes=args.timeframes,
             models=models,
+            htf_mode=args.htf_mode,
         )
     except HistoricalDataError as exc:
         print(f"Error: {exc}")
@@ -56,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             price_precision=args.price_precision,
             start_ms=_parse_time_ms(args.start, is_end=False) if args.start else None,
             end_ms=_parse_time_ms(args.end, is_end=True) if args.end else None,
+            htf_mode=args.htf_mode,
         )
         all_results.extend(results)
         all_warnings.extend(replay_warnings)
@@ -75,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
             "cooldown_bars": args.cooldown_bars,
             "start": args.start,
             "end": args.end,
+            "htf_mode": args.htf_mode,
+            "execution_pairs": EXECUTION_HTF_MAP,
+            "model_3_htf_map": MODEL_3_HTF_MAP,
+            "model_3_ltf_map": MODEL_3_LTF_MAP,
         },
     )
 
@@ -86,7 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline event-study backtest for Entry Model 1/2/3.")
     parser.add_argument("--data-dir", default="data/history", help="Directory with historical OHLCV CSV/JSON files.")
     parser.add_argument("--symbols", nargs="+", required=True, help="Symbols, e.g. BTCUSDT ETHUSDT.")
-    parser.add_argument("--timeframes", nargs="+", required=True, help="Primary timeframes, e.g. 15m 1h.")
+    parser.add_argument("--timeframes", nargs="+", required=True, choices=SUPPORTED_TIMEFRAMES, help="Primary timeframes, e.g. 15m 1h.")
     parser.add_argument("--models", nargs="+", help="Models to run: model1 model2 model3.")
     parser.add_argument("--model", action="append", help="Single model selector. Can be repeated.")
     parser.add_argument("--forward-bars", type=int, default=20, help="Number of future bars for outcome evaluation.")
@@ -95,6 +101,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--price-precision", type=int, default=4, help="Precision used for rounded entry-zone dedup.")
     parser.add_argument("--start", help="UTC replay start datetime/date, e.g. 2025-05-01.")
     parser.add_argument("--end", help="UTC replay end datetime/date, e.g. 2025-06-30.")
+    parser.add_argument("--htf-mode", choices=["strict", "soft", "off"], default="strict", help="HTF filtering mode.")
     parser.add_argument("--out-dir", default="backtest_results", help="Output directory for CSV and markdown report.")
     return parser
 
@@ -121,12 +128,13 @@ def _load_candle_store(
     symbols: list[str],
     timeframes: list[str],
     models: list[str],
+    htf_mode: str,
 ) -> tuple[dict[tuple[str, str], list[Candle]], list[ReplayWarning]]:
     store: dict[tuple[str, str], list[Candle]] = {}
     warnings: list[ReplayWarning] = []
 
     required = {(symbol, timeframe) for symbol in symbols for timeframe in timeframes}
-    optional = _optional_context_keys(symbols, timeframes)
+    optional = _optional_context_keys(symbols, timeframes, models=models, htf_mode=htf_mode)
 
     for symbol, timeframe in sorted(required):
         store[(symbol, timeframe)] = load_history_for(data_dir, symbol, timeframe, required=True) or []
@@ -152,18 +160,38 @@ def _load_candle_store(
                                 message=f"missing optional {label} history {context_tf}; model3 context will be incomplete",
                             )
                         )
+    if htf_mode != "off":
+        for symbol in symbols:
+            for timeframe in timeframes:
+                htf = execution_htf_for(timeframe)
+                if htf and (symbol, htf) not in store:
+                    warnings.append(
+                        ReplayWarning(
+                            model_name="Entry Models",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            timestamp=0,
+                            message=f"missing optional HTF history {htf}; strict/soft HTF filtering may block signals",
+                        )
+                    )
     return store, warnings
 
 
-def _optional_context_keys(symbols: list[str], timeframes: list[str]) -> set[tuple[str, str]]:
+def _optional_context_keys(
+    symbols: list[str],
+    timeframes: list[str],
+    *,
+    models: list[str],
+    htf_mode: str,
+) -> set[tuple[str, str]]:
     keys: set[tuple[str, str]] = set()
     for symbol in symbols:
         for timeframe in timeframes:
-            htf = MODEL_3_HTF_MAP.get(timeframe)
+            htf = execution_htf_for(timeframe) if htf_mode != "off" else MODEL_3_HTF_MAP.get(timeframe)
             ltf = MODEL_3_LTF_MAP.get(timeframe)
-            if htf:
+            if htf and (htf_mode != "off" or "model3" in models):
                 keys.add((symbol, htf))
-            if ltf:
+            if ltf and "model3" in models:
                 keys.add((symbol, ltf))
     return keys
 

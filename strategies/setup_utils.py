@@ -49,6 +49,33 @@ def current_price(snapshot: PrimitiveSnapshot) -> float | None:
     return None
 
 
+def timeframe_to_ms(timeframe: str) -> int | None:
+    unit = timeframe[-1:]
+    try:
+        value = int(timeframe[:-1])
+    except ValueError:
+        return None
+    if unit == "m":
+        return value * 60_000
+    if unit == "h":
+        return value * 60 * 60_000
+    if unit == "d":
+        return value * 24 * 60 * 60_000
+    return None
+
+
+def max_age_ms(timeframe: str, bars: int) -> int | None:
+    tf_ms = timeframe_to_ms(timeframe)
+    return tf_ms * bars if tf_ms is not None else None
+
+
+def is_recent_enough(current_timestamp: int, candidate_timestamp: int, timeframe: str, max_bars: int) -> bool:
+    age_ms = max_age_ms(timeframe, max_bars)
+    if age_ms is None:
+        return True
+    return current_timestamp - candidate_timestamp <= age_ms
+
+
 def classify_zone_status(
     snapshot: PrimitiveSnapshot,
     *,
@@ -94,7 +121,10 @@ __all__ = [
     "closed_candles",
     "current_candle",
     "first_closed_touch_after",
+    "is_recent_enough",
+    "max_age_ms",
     "opposite_direction",
     "primitive_direction",
     "sweep_label",
+    "timeframe_to_ms",
 ]

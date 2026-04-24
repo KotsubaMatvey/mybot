@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from market_primitives.common import FairValueGap, StructureBreak
 
+from config import MIN_RISK_BPS
+from .htf_context import htf_allows_side, htf_metadata, htf_score_modifier
 from .scoring import score_model_3
-from .setup_utils import classify_zone_status, primitive_direction
+from .setup_utils import classify_zone_status, current_price, primitive_direction
 from .types import EntrySetup, PrimitiveSnapshot, StrategyContext, default_components
 
 
 def detect_entry_model_3(context: StrategyContext) -> list[EntrySetup]:
+    if context.htf_mode != "off" and context.htf_context is None:
+        return []
     if context.higher_timeframe is None or context.lower_timeframe is None:
         return []
 
@@ -22,8 +26,15 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
     ltf = context.lower_timeframe
     if htf is None or ltf is None:
         return []
+    if not htf_allows_side(context.htf_context, side, context.htf_mode):
+        return []
 
     direction = primitive_direction(side)  # type: ignore[arg-type]
+    if context.htf_context is not None and context.htf_context.bias.direction not in {direction, "neutral"}:
+        return []
+    if context.htf_context is not None and context.htf_context.bias.direction == "neutral":
+        return []
+
     htf_structure = next(
         (item for item in sorted(htf.structure_breaks, key=lambda item: item.timestamp, reverse=True) if item.direction == direction),
         None,
@@ -53,12 +64,12 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
     if continuation_fvg is None:
         return []
 
-    setup = _build_setup(context.primary, htf, ltf, side, htf_structure, ltf_structure, continuation_fvg)
+    setup = _build_setup(context, htf, ltf, side, htf_structure, ltf_structure, continuation_fvg)
     return [setup] if setup is not None else []
 
 
 def _build_setup(
-    primary: PrimitiveSnapshot,
+    context: StrategyContext,
     htf: PrimitiveSnapshot,
     ltf: PrimitiveSnapshot,
     side: str,
@@ -85,6 +96,17 @@ def _build_setup(
         if side == "long"
         else max(candle["high"] for candle in recent_slice)
     )
+    price = current_price(ltf)
+    entry_mid = (ltf_fvg.gap_low + ltf_fvg.gap_high) / 2
+    risk = abs(entry_mid - invalidation)
+    risk_floor = (price or entry_mid) * (MIN_RISK_BPS / 10_000)
+    if risk < risk_floor:
+        return None
+    zone_width = max(abs(ltf_fvg.gap_high - ltf_fvg.gap_low), risk_floor)
+    if price is not None:
+        distance = 0.0 if ltf_fvg.gap_low <= price <= ltf_fvg.gap_high else min(abs(price - ltf_fvg.gap_low), abs(price - ltf_fvg.gap_high))
+        if distance > max(zone_width * 2.0, price * 0.004):
+            return None
 
     score = score_model_3(
         htf_alignment=0.8 if htf_structure.break_type in {"BOS", "CHOCH"} else 0.5,
@@ -93,6 +115,7 @@ def _build_setup(
         entry_high=ltf_fvg.gap_high,
         invalidation=invalidation,
         missed_primary_penalty=0.3,
+        htf_modifier=htf_score_modifier(context.htf_context, side, context.htf_mode),
     )
 
     components = default_components()
@@ -103,7 +126,7 @@ def _build_setup(
     return EntrySetup(
         model_name="Entry Model 3",
         direction="long" if side == "long" else "short",
-        symbol=primary.symbol,
+        symbol=context.primary.symbol,
         timeframe=ltf.timeframe,
         status=status,
         entry_low=ltf_fvg.gap_low,
@@ -118,11 +141,12 @@ def _build_setup(
         components=components,
         timestamp=max(status_time, htf_structure.timestamp, ltf_structure.timestamp, ltf_fvg.created_at),
         metadata={
-            "primary_timeframe": primary.timeframe,
+            "primary_timeframe": context.primary.timeframe,
             "htf_timeframe": htf.timeframe,
             "ltf_timeframe": ltf.timeframe,
             "htf_structure_type": htf_structure.break_type,
             "ltf_structure_type": ltf_structure.break_type,
+            **htf_metadata(context.htf_context),
         },
     )
 

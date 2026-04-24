@@ -17,6 +17,7 @@ def score_model_1(
     entry_high: float,
     invalidation: float,
     context_alignment: float = 0.0,
+    htf_modifier: float = 0.0,
     messy_overlap: bool = False,
     late_mitigation: bool = False,
 ) -> int:
@@ -33,7 +34,7 @@ def score_model_1(
         invalidation_width = abs(((entry_low + entry_high) / 2) - invalidation) / invalidation
         if invalidation_width > 0.01:
             score -= 0.4
-    score += context_alignment
+    score += context_alignment + htf_modifier
     if messy_overlap:
         score -= 0.4
     if late_mitigation:
@@ -48,9 +49,10 @@ def score_model_2(
     entry_low: float,
     entry_high: float,
     invalidation: float,
+    htf_modifier: float = 0.0,
     messy_overlap: bool = False,
 ) -> int:
-    score = 3.2
+    score = 2.8
     if clean_sweep:
         score += 0.5
     score += min(0.8, inversion_confidence)
@@ -63,6 +65,7 @@ def score_model_2(
         score -= 0.4
     if messy_overlap:
         score -= 0.5
+    score += htf_modifier
     return clamp_score(score)
 
 
@@ -74,6 +77,7 @@ def score_model_3(
     entry_high: float,
     invalidation: float,
     missed_primary_penalty: float = 0.0,
+    htf_modifier: float = 0.0,
 ) -> int:
     score = 2.3 + min(0.9, htf_alignment) + min(0.7, ltf_strength) - missed_primary_penalty
     zone_width = normalized_zone_width(entry_low, entry_high)
@@ -83,6 +87,7 @@ def score_model_3(
         score -= 0.5
     if invalidation > 0 and abs(((entry_low + entry_high) / 2) - invalidation) / invalidation > 0.009:
         score -= 0.4
+    score += htf_modifier
     return clamp_score(score)
 
 

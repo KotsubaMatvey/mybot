@@ -24,6 +24,16 @@ class BacktestEvent:
     components_json: str
     warning: str | None = None
     skipped_reason: str | None = None
+    htf_bias: str | None = None
+    htf_confidence: float | None = None
+    htf_zone_type: str | None = None
+    htf_zone_low: float | None = None
+    htf_zone_high: float | None = None
+    htf_location: str | None = None
+    htf_allows_long: bool | None = None
+    htf_allows_short: bool | None = None
+    htf_objective_type: str | None = None
+    htf_objective_level: float | None = None
 
 
 @dataclass(slots=True)

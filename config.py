@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from timeframes import EXECUTION_HTF_MAP, MODEL_3_HTF_MAP, MODEL_3_LTF_MAP, SUPPORTED_TIMEFRAMES
 
 load_dotenv()
 
@@ -10,7 +11,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XAGUSDT"]
 
 # ── Timeframes
-TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"]
+TIMEFRAMES = SUPPORTED_TIMEFRAMES
+
+# Entry model HTF/LTF behavior
+REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS = True
+ENTRY_MODEL_HTF_MODE = os.getenv("ENTRY_MODEL_HTF_MODE", "strict")  # strict | soft | off
+MIN_RISK_BPS = 5
+MAX_SETUP_AGE_BARS = 30
+MAX_INVERSION_AGE_BARS = 40
 
 # ── Candles to fetch
 CANDLE_LIMIT = 100

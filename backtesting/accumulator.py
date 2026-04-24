@@ -6,13 +6,19 @@ from typing import Any
 from backtesting import Candle
 from market_primitives import (
     detect_breaker_blocks,
+    detect_eqh,
+    detect_eql,
     detect_fvg,
     detect_ifvg,
+    detect_key_levels,
     detect_liquidity_raids,
     detect_order_blocks,
+    detect_pd_zones,
     detect_structure_breaks,
     detect_sweeps,
     detect_swings,
+    detect_volume,
+    detect_volume_profile,
 )
 from strategies.types import PrimitiveSnapshot
 
@@ -261,6 +267,11 @@ def _build_entry_model_snapshot(symbol: str, timeframe: str, candles: list[Candl
         ifvgs=detect_ifvg(candles, symbol, timeframe),
         order_blocks=detect_order_blocks(candles, symbol, timeframe),
         breaker_blocks=detect_breaker_blocks(candles, symbol, timeframe),
+        equal_highs=detect_eqh(candles, symbol, timeframe),
+        equal_lows=detect_eql(candles, symbol, timeframe),
+        key_levels=detect_key_levels(candles, symbol, timeframe),
+        volume_signals=detect_volume(candles, symbol, timeframe) + detect_volume_profile(candles, symbol, timeframe),
+        pd_zones=detect_pd_zones(candles, symbol, timeframe),
     )
 
 

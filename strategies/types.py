@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from market_primitives.common import (
     BreakerBlock,
@@ -17,6 +17,9 @@ from market_primitives.common import (
     SwingPoint,
     VolumeSignal,
 )
+
+if TYPE_CHECKING:
+    from strategies.htf_context import HTFContext
 
 SetupDirection = Literal["long", "short"]
 SetupStatus = Literal["watching", "confirmed", "triggered"]
@@ -77,6 +80,10 @@ class StrategyContext:
     primary: PrimitiveSnapshot
     higher_timeframe: PrimitiveSnapshot | None = None
     lower_timeframe: PrimitiveSnapshot | None = None
+    htf_context: "HTFContext | None" = None
+    htf_timeframe: str | None = None
+    execution_timeframe: str | None = None
+    htf_mode: str = "strict"
 
 
 def default_components() -> SetupComponents:

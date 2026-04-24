@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+from timeframes import SUPPORTED_TIMEFRAMES
 
 BINANCE_FUTURES_API = "https://fapi.binance.com"
 MAX_BINANCE_LIMIT = 1500
@@ -17,7 +18,7 @@ async def main_async(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Download Binance Futures OHLCV history into backtest CSV files.")
     parser.add_argument("--out-dir", default="data/history")
     parser.add_argument("--symbols", nargs="+", required=True)
-    parser.add_argument("--timeframes", nargs="+", required=True)
+    parser.add_argument("--timeframes", nargs="+", required=True, choices=SUPPORTED_TIMEFRAMES)
     parser.add_argument("--limit", type=int, default=1000, help="Candles per symbol/timeframe, max 1500 per request.")
     parser.add_argument("--start", help="UTC start datetime/date, e.g. 2024-11-06 or 2024-11-06T00:00:00Z.")
     parser.add_argument("--end", help="UTC end datetime/date, e.g. 2026-04-20 or 2026-04-20T23:59:59Z.")

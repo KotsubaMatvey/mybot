@@ -41,6 +41,7 @@ class ReplayConfig:
     price_precision: int = 4
     start_ms: int | None = None
     end_ms: int | None = None
+    htf_mode: str = "strict"
 
 
 @dataclass(slots=True)
@@ -97,6 +98,7 @@ def replay_entry_models(
             timeframe=config.timeframe,
             current_timestamp=current_timestamp,
             snapshot_cache=snapshot_cache,
+            htf_mode=config.htf_mode,
         )
         if context is None:
             continue
@@ -169,6 +171,7 @@ def replay_entry_models_multi_timeframe(
     price_precision: int = 4,
     start_ms: int | None = None,
     end_ms: int | None = None,
+    htf_mode: str = "strict",
 ) -> tuple[list[BacktestResult], list[ReplayWarning]]:
     results: list[BacktestResult] = []
     warnings: list[ReplayWarning] = []
@@ -196,6 +199,7 @@ def replay_entry_models_multi_timeframe(
             timeframe=timeframe,
             current_timestamp=current_timestamp,
             snapshot_cache=snapshot_cache,
+            htf_mode=htf_mode,
         )
         if context is None:
             continue
@@ -306,6 +310,7 @@ def _setup_to_event(
         "raw_timeframe": setup.get("timeframe"),
         "raw_timestamp": setup.get("timestamp"),
     }
+    metadata = setup.get("metadata") or {}
     event_id = _event_id(
         model_name=model_name,
         symbol=symbol,
@@ -335,6 +340,16 @@ def _setup_to_event(
         components_json=json.dumps(components, ensure_ascii=True, sort_keys=True, default=str),
         warning=warning,
         skipped_reason=skipped_reason,
+        htf_bias=_optional_str(metadata.get("htf_bias")),
+        htf_confidence=_optional_float(metadata.get("htf_confidence")),
+        htf_zone_type=_optional_str(metadata.get("htf_zone_type")),
+        htf_zone_low=_optional_float(metadata.get("htf_zone_low")),
+        htf_zone_high=_optional_float(metadata.get("htf_zone_high")),
+        htf_location=_optional_str(metadata.get("htf_location")),
+        htf_allows_long=_optional_bool(metadata.get("htf_allows_long")),
+        htf_allows_short=_optional_bool(metadata.get("htf_allows_short")),
+        htf_objective_type=_optional_str(metadata.get("htf_objective_type")),
+        htf_objective_level=_optional_float(metadata.get("htf_objective_level")),
     )
 
 
@@ -418,6 +433,20 @@ def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 __all__ = [

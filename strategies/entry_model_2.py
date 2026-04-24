@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 from market_primitives.common import BreakerBlock, InvertedFVG, LiquiditySweep, zone_overlap
 
+from config import MAX_INVERSION_AGE_BARS, REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
+from .htf_context import htf_allows_side, htf_metadata, htf_score_modifier
 from .scoring import score_model_2
-from .setup_utils import classify_zone_status, primitive_direction, sweep_label
+from .setup_utils import classify_zone_status, is_recent_enough, primitive_direction, sweep_label
 from .types import EntrySetup, PrimitiveSnapshot, StrategyContext, default_components
 
 
@@ -29,6 +31,10 @@ def detect_entry_model_2(context: StrategyContext) -> list[EntrySetup]:
 
 
 def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
+    htf_mode = context.htf_mode if REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS else "off"
+    if REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS and not htf_allows_side(context.htf_context, side, htf_mode):
+        return []
+
     snapshot = context.primary
     direction = primitive_direction(side)  # type: ignore[arg-type]
     sweeps = sorted(
@@ -37,12 +43,22 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
         reverse=True,
     )
     candidates = sorted(_build_candidates(snapshot, direction), key=lambda item: item.armed_time)
+    current_timestamp = int(snapshot.candles[-1]["time"]) if snapshot.candles else 0
 
     for sweep in sweeps[:4]:
-        candidate = next((item for item in candidates if item.armed_time > sweep.timestamp), None)
+        candidate = next(
+            (
+                item
+                for item in candidates
+                if item.armed_time > sweep.timestamp
+                and item.timestamp > sweep.timestamp
+                and is_recent_enough(current_timestamp, item.armed_time, snapshot.timeframe, MAX_INVERSION_AGE_BARS)
+            ),
+            None,
+        )
         if candidate is None:
             continue
-        setup = _build_setup(snapshot, side, sweep, candidate, context.higher_timeframe)
+        setup = _build_setup(snapshot, side, sweep, candidate, context, htf_mode)
         if setup is not None:
             return [setup]
     return []
@@ -100,8 +116,10 @@ def _build_setup(
     side: str,
     sweep: LiquiditySweep,
     candidate: _InversionCandidate,
-    higher_snapshot: PrimitiveSnapshot | None,
+    context: StrategyContext,
+    htf_mode: str,
 ) -> EntrySetup | None:
+    higher_snapshot = context.higher_timeframe
     status_info = classify_zone_status(
         snapshot,
         zone_low=candidate.zone_low,
@@ -122,6 +140,7 @@ def _build_setup(
         entry_low=candidate.zone_low,
         entry_high=candidate.zone_high,
         invalidation=sweep.wick_extreme,
+        htf_modifier=htf_score_modifier(context.htf_context, side, htf_mode),
         messy_overlap=messy_overlap,
     )
 
@@ -141,12 +160,22 @@ def _build_setup(
         target_hint=_target_hint(side, candidate.zone_low, candidate.zone_high, sweep.wick_extreme),
         sweep_level=sweep.liquidity_level,
         structure_level=None,
-        context_timeframe=None,
+        context_timeframe=context.htf_timeframe,
         score=score,
-        reason=f"{sweep_label(side)} sweep, {candidate.kind} inversion armed",
+        reason=_reason(context, side, candidate),
         components=components,
         timestamp=max(status_time, sweep.timestamp, candidate.timestamp),
-        metadata={"candidate_kind": candidate.kind, **candidate.metadata},
+        metadata={"candidate_kind": candidate.kind, **candidate.metadata, **htf_metadata(context.htf_context)},
+    )
+
+
+def _reason(context: StrategyContext, side: str, candidate: _InversionCandidate) -> str:
+    htf = context.htf_context
+    if htf is None:
+        return f"{sweep_label(side)} sweep, {candidate.kind} inversion armed"
+    return (
+        f"HTF {htf.bias.direction} {htf.dealing_range.location}/{htf.zone.zone_type} context -> "
+        f"LTF {sweep_label(side)} sweep, {candidate.kind} inversion retest"
     )
 
 

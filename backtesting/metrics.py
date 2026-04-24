@@ -43,6 +43,26 @@ def build_all_summaries(results: list[BacktestResult]) -> dict[str, list[Summary
             lambda row: (row.event.model_name, score_bucket(row.event.score)),
             ("model", "score_bucket"),
         ),
+        "summary_by_htf_bias": summarize(
+            results,
+            lambda row: (row.event.model_name, row.event.htf_bias or "none"),
+            ("model", "htf_bias"),
+        ),
+        "summary_by_htf_zone": summarize(
+            results,
+            lambda row: (row.event.model_name, row.event.htf_zone_type or "None"),
+            ("model", "htf_zone_type"),
+        ),
+        "summary_by_htf_location": summarize(
+            results,
+            lambda row: (row.event.model_name, row.event.htf_location or "unknown"),
+            ("model", "htf_location"),
+        ),
+        "summary_by_model_htf_alignment": summarize(
+            results,
+            lambda row: (row.event.model_name, _htf_alignment(row)),
+            ("model", "htf_alignment"),
+        ),
     }
 
 
@@ -116,6 +136,19 @@ def _best_dimension(group: list[BacktestResult], attr: str) -> str | None:
         return None
     best = max(by_value.items(), key=lambda item: sum(item[1]) / len(item[1]))
     return best[0]
+
+
+def _htf_alignment(result: BacktestResult) -> str:
+    bias = result.event.htf_bias
+    if not bias or bias == "none":
+        return "no_htf"
+    if bias == "neutral":
+        return "neutral"
+    if (result.event.direction == "long" and bias == "bullish") or (
+        result.event.direction == "short" and bias == "bearish"
+    ):
+        return "aligned"
+    return "opposed"
 
 
 __all__ = ["SummaryRow", "build_all_summaries", "score_bucket", "summarize"]

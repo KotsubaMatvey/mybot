@@ -6,7 +6,7 @@ from collections import defaultdict
 
 import aiohttp
 
-from config import CANDLE_LIMIT, SYMBOLS, TIMEFRAMES
+from config import CANDLE_LIMIT, ENTRY_MODEL_HTF_MODE, SYMBOLS, TIMEFRAMES
 from market_primitives import detect_smt
 from presentation.alert_builders import build_primitive_alerts, from_entry_setup, from_smt_divergence
 from presentation.types import AlertPayload
@@ -28,6 +28,9 @@ from strategies import (
     detect_entry_model_2,
     detect_entry_model_3,
 )
+from strategies.htf_context import build_htf_context
+from strategies.setup_utils import current_price
+from timeframes import EXECUTION_HTF_MAP, MODEL_3_HTF_MAP, MODEL_3_LTF_MAP, execution_htf_for
 from strategies.types import PrimitiveSnapshot
 
 logger = logging.getLogger(__name__)
@@ -54,22 +57,6 @@ PRIMITIVE_PATTERNS = [
 STRATEGY_PATTERNS = ["Entry Model 1", "Entry Model 2", "Entry Model 3"]
 ALL_PATTERNS = PRIMITIVE_PATTERNS + STRATEGY_PATTERNS
 
-MODEL_3_LTF_MAP = {
-    "5m": "1m",
-    "15m": "5m",
-    "30m": "15m",
-    "1h": "15m",
-    "4h": "1h",
-    "1d": "4h",
-}
-MODEL_3_HTF_MAP = {
-    "5m": "15m",
-    "15m": "30m",
-    "30m": "1h",
-    "1h": "4h",
-    "4h": "1d",
-    "1d": None,
-}
 SMT_TIMEFRAMES = {"1h", "4h", "1d"}
 SMT_PAIRS = [("BTCUSDT", "ETHUSDT")]
 
@@ -115,8 +102,17 @@ def _build_strategy_alerts(
     primary: PrimitiveSnapshot,
     higher: PrimitiveSnapshot | None,
     lower: PrimitiveSnapshot | None,
+    htf_timeframe: str | None,
 ) -> list[AlertPayload]:
-    context = StrategyContext(primary=primary, higher_timeframe=higher, lower_timeframe=lower)
+    context = StrategyContext(
+        primary=primary,
+        higher_timeframe=higher,
+        lower_timeframe=lower,
+        htf_context=build_htf_context(higher, current_price(primary)) if higher is not None else None,
+        htf_timeframe=htf_timeframe,
+        execution_timeframe=primary.timeframe,
+        htf_mode=ENTRY_MODEL_HTF_MODE,
+    )
     setups = []
     setups.extend(detect_entry_model_1(context))
     setups.extend(detect_entry_model_2(context))
@@ -153,7 +149,12 @@ async def run_scanner() -> tuple[list[AlertPayload], list[dict[str, str]], dict[
     snapshots: dict[tuple[str, str], PrimitiveSnapshot] = {}
     alerts_by_symbol: dict[str, dict[str, list[AlertPayload]]] = {symbol: {} for symbol in SYMBOLS}
 
-    fetch_timeframes = sorted(set(TIMEFRAMES) | {tf for tf in MODEL_3_LTF_MAP.values() if tf})
+    fetch_timeframes = sorted(
+        set(TIMEFRAMES)
+        | {tf for tf in EXECUTION_HTF_MAP.values() if tf}
+        | {tf for tf in MODEL_3_HTF_MAP.values() if tf}
+        | {tf for tf in MODEL_3_LTF_MAP.values() if tf}
+    )
 
     connector = aiohttp.TCPConnector(limit=10, ttl_dns_cache=300)
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -175,7 +176,7 @@ async def run_scanner() -> tuple[list[AlertPayload], list[dict[str, str]], dict[
             primary = snapshots.get((symbol, timeframe))
             if primary is None:
                 continue
-            higher_tf = MODEL_3_HTF_MAP.get(timeframe)
+            higher_tf = execution_htf_for(timeframe)
             lower_tf = MODEL_3_LTF_MAP.get(timeframe)
 
             primitive_alerts = build_primitive_alerts(
@@ -198,6 +199,7 @@ async def run_scanner() -> tuple[list[AlertPayload], list[dict[str, str]], dict[
                 primary,
                 snapshots.get((symbol, higher_tf)) if higher_tf else None,
                 snapshots.get((symbol, lower_tf)) if lower_tf else None,
+                higher_tf,
             )
             combined = primitive_alerts + strategy_alerts
             if not combined:
@@ -247,6 +249,7 @@ async def run_scanner() -> tuple[list[AlertPayload], list[dict[str, str]], dict[
 
 __all__ = [
     "ALL_PATTERNS",
+    "EXECUTION_HTF_MAP",
     "MODEL_3_HTF_MAP",
     "MODEL_3_LTF_MAP",
     "PRIMITIVE_PATTERNS",

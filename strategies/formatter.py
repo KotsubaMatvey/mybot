@@ -12,6 +12,11 @@ def build_setup_alert_text(setup: EntrySetup) -> str:
     else:
         lines.append(f"{setup.symbol}  {setup.timeframe}")
     lines.append(f"{setup.model_name}  {setup.direction.upper()}")
+    htf_bias = setup.metadata.get("htf_bias")
+    if htf_bias and htf_bias != "none":
+        htf_location = setup.metadata.get("htf_location", "unknown")
+        htf_zone = setup.metadata.get("htf_zone_type", "None")
+        lines.append(f"HTF: {setup.context_timeframe or '-'} {htf_bias} {htf_location} {htf_zone}")
     lines.append(setup.reason)
     lines.append(f"Entry zone: {fmt_price(setup.entry_low)} - {fmt_price(setup.entry_high)}")
     lines.append(f"Invalidation: {fmt_price(setup.invalidation)}")

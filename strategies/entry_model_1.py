@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from market_primitives.common import FairValueGap, LiquiditySweep, StructureBreak, zone_overlap
 
+from config import REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
+from .htf_context import htf_allows_side, htf_metadata, htf_score_modifier
 from .scoring import score_model_1
 from .setup_utils import classify_zone_status, primitive_direction, sweep_label
 from .types import EntrySetup, PrimitiveSnapshot, StrategyContext, default_components
@@ -15,6 +17,10 @@ def detect_entry_model_1(context: StrategyContext) -> list[EntrySetup]:
 
 
 def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
+    htf_mode = context.htf_mode if REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS else "off"
+    if REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS and not htf_allows_side(context.htf_context, side, htf_mode):
+        return []
+
     snapshot = context.primary
     direction = primitive_direction(side)  # type: ignore[arg-type]
     sweeps = sorted(
@@ -54,7 +60,7 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
         if post_bos_fvg is None:
             continue
 
-        setup = _build_setup(snapshot, side, sweep, structure, post_bos_fvg, context.higher_timeframe)
+        setup = _build_setup(snapshot, side, sweep, structure, post_bos_fvg, context, htf_mode)
         if setup is not None:
             return [setup]
     return []
@@ -66,8 +72,10 @@ def _build_setup(
     sweep: LiquiditySweep,
     structure: StructureBreak,
     fvg: FairValueGap,
-    higher_snapshot: PrimitiveSnapshot | None,
+    context: StrategyContext,
+    htf_mode: str,
 ) -> EntrySetup | None:
+    higher_snapshot = context.higher_timeframe
     entry_low = fvg.gap_low
     entry_high = fvg.gap_high
     armed_time = max(structure.timestamp, fvg.created_at)
@@ -91,6 +99,7 @@ def _build_setup(
         entry_high=entry_high,
         invalidation=sweep.wick_extreme,
         context_alignment=htf_alignment,
+        htf_modifier=htf_score_modifier(context.htf_context, side, htf_mode),
         messy_overlap=messy_overlap,
         late_mitigation=late_mitigation,
     )
@@ -112,9 +121,9 @@ def _build_setup(
         target_hint=_target_hint(side, sweep.liquidity_level, structure.broken_level, entry_low, entry_high),
         sweep_level=sweep.liquidity_level,
         structure_level=structure.broken_level,
-        context_timeframe=None,
+        context_timeframe=context.htf_timeframe,
         score=score,
-        reason=f"{sweep_label(side)} sweep, {structure.break_type} confirmed, post-BOS FVG ready",
+        reason=_reason(context, side, structure),
         components=components,
         timestamp=max(status_time, sweep.timestamp, structure.timestamp, fvg.created_at),
         metadata={
@@ -122,7 +131,18 @@ def _build_setup(
             "structure_type": structure.break_type,
             "fvg_created_at": fvg.created_at,
             "fvg_mitigated_at": fvg.mitigated_at,
+            **htf_metadata(context.htf_context),
         },
+    )
+
+
+def _reason(context: StrategyContext, side: str, structure: StructureBreak) -> str:
+    htf = context.htf_context
+    if htf is None:
+        return f"{sweep_label(side)} sweep, {structure.break_type} confirmed, post-BOS FVG ready"
+    return (
+        f"HTF {htf.bias.direction} {htf.dealing_range.location}/{htf.zone.zone_type} context -> "
+        f"LTF {sweep_label(side)} sweep, {structure.break_type}, post-BOS FVG retest"
     )
 
 

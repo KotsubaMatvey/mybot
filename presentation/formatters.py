@@ -29,6 +29,13 @@ def build_strategy_alert_text(alert: AlertPayload) -> str:
     else:
         lines.append(f"{alert.symbol}  {alert.timeframe}")
     lines.append(f"{alert.pattern}  {(alert.trade_direction or '').upper()}")
+    htf_bias = alert.metadata.get("htf_bias")
+    if htf_bias and htf_bias != "none":
+        htf_location = alert.metadata.get("htf_location", "unknown")
+        htf_zone = alert.metadata.get("htf_zone_type", "None")
+        lines.append(f"HTF: {alert.context_timeframe or '-'} {htf_bias} {htf_location} {htf_zone}")
+    if alert.status:
+        lines.append(f"Status: {alert.status.upper()}")
     if alert.reason:
         lines.append(alert.reason)
     if alert.entry_low is not None and alert.entry_high is not None:
@@ -38,6 +45,20 @@ def build_strategy_alert_text(alert: AlertPayload) -> str:
     if alert.score is not None:
         lines.append(f"Score: {alert.score}/5")
     return "\n".join(lines)
+
+
+def build_chart_caption(symbol: str, timeframe: str, alerts: Iterable[AlertPayload]) -> str:
+    payloads = list(alerts)
+    if not payloads:
+        return f"{symbol}  {timeframe}"
+    strategy = next((alert for alert in payloads if alert.alert_kind == "strategy"), None)
+    if strategy is not None:
+        parts = [f"{symbol}  {timeframe}", f"{strategy.pattern} {str(strategy.trade_direction or '').upper()}"]
+        if strategy.score is not None:
+            parts.append(f"{strategy.score}/5")
+        return " | ".join(part for part in parts if part)
+    patterns = ", ".join(alert.pattern for alert in payloads[:3])
+    return f"{symbol}  {timeframe} | {patterns}"
 
 
 def build_payment_message(price: str | float, expired: bool = False) -> str:
@@ -94,6 +115,7 @@ def build_setup_summary(symbols, patterns, timeframes, entry_models, trade_direc
 
 __all__ = [
     "build_alert_message",
+    "build_chart_caption",
     "build_dashboard_message",
     "build_payment_message",
     "build_setup_summary",

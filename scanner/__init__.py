@@ -28,6 +28,7 @@ from presentation.alert_builders import (
 from scanner.cache import get_active_zones, get_cached_candles, get_cached_patterns
 from scanner.engine import (
     ALL_PATTERNS,
+    EXECUTION_HTF_MAP,
     MODEL_3_HTF_MAP,
     MODEL_3_LTF_MAP,
     PRIMITIVE_PATTERNS,
@@ -142,6 +143,7 @@ def detect_breaker(candles: list[dict]) -> list[dict]:
 
 __all__ = [
     "ALL_PATTERNS",
+    "EXECUTION_HTF_MAP",
     "MODEL_3_HTF_MAP",
     "MODEL_3_LTF_MAP",
     "PRIMITIVE_PATTERNS",
