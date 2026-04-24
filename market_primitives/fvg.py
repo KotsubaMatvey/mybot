@@ -65,7 +65,7 @@ def _build_gap(
         symbol=symbol,
         timeframe=timeframe,
         direction=direction,  # type: ignore[arg-type]
-        created_at=candles[idx - 2]["time"],
+        created_at=candles[idx]["time"],
         gap_low=gap_low,
         gap_high=gap_high,
         mitigated=mitigated,
@@ -73,7 +73,7 @@ def _build_gap(
         mitigated_at=mitigated_at,
         invalidated_at=invalidated_at,
         fill_ratio=min(fill_ratio, 1.0),
-        metadata={"anchor_index": idx},
+        metadata={"anchor_index": idx, "start_time": candles[idx - 2]["time"]},
     )
 
 

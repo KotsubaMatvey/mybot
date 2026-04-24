@@ -1,9 +1,24 @@
 from __future__ import annotations
 
-from market_primitives.common import InvertedFVG, LiquiditySweep, zone_overlap
+from dataclasses import dataclass
+
+from market_primitives.common import BreakerBlock, InvertedFVG, LiquiditySweep, zone_overlap
 
 from .scoring import score_model_2
-from .types import EntrySetup, StrategyContext, default_components
+from .setup_utils import classify_zone_status, primitive_direction, sweep_label
+from .types import EntrySetup, PrimitiveSnapshot, StrategyContext, default_components
+
+
+@dataclass(slots=True)
+class _InversionCandidate:
+    kind: str
+    direction: str
+    zone_low: float
+    zone_high: float
+    armed_time: int
+    timestamp: int
+    confidence: float
+    metadata: dict
 
 
 def detect_entry_model_2(context: StrategyContext) -> list[EntrySetup]:
@@ -15,50 +30,98 @@ def detect_entry_model_2(context: StrategyContext) -> list[EntrySetup]:
 
 def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
     snapshot = context.primary
-    expected_direction = "bullish" if side == "long" else "bearish"
+    direction = primitive_direction(side)  # type: ignore[arg-type]
     sweeps = sorted(
-        [item for item in (snapshot.raids + snapshot.sweeps) if item.direction == expected_direction],
+        [item for item in (snapshot.raids + snapshot.sweeps) if item.direction == direction],
         key=lambda item: item.timestamp,
         reverse=True,
     )
-    inversions = sorted(
-        [item for item in snapshot.ifvgs if item.direction == expected_direction],
-        key=lambda item: item.timestamp,
-        reverse=True,
-    )
-    results: list[EntrySetup] = []
+    candidates = sorted(_build_candidates(snapshot, direction), key=lambda item: item.armed_time)
 
-    for sweep in sweeps[:3]:
-        inversion = next((item for item in inversions if item.invalidated_at >= sweep.timestamp), None)
-        if inversion is None:
+    for sweep in sweeps[:4]:
+        candidate = next((item for item in candidates if item.armed_time > sweep.timestamp), None)
+        if candidate is None:
             continue
-        results.append(_build_setup(snapshot.symbol, snapshot.timeframe, side, sweep, inversion, context.higher_timeframe))
-        break
-    return results
+        setup = _build_setup(snapshot, side, sweep, candidate, context.higher_timeframe)
+        if setup is not None:
+            return [setup]
+    return []
+
+
+def _build_candidates(snapshot: PrimitiveSnapshot, direction: str) -> list[_InversionCandidate]:
+    candidates: list[_InversionCandidate] = []
+    for inversion in snapshot.ifvgs:
+        if inversion.direction != direction:
+            continue
+        candidates.append(_from_ifvg(inversion))
+    for breaker in snapshot.breaker_blocks:
+        if breaker.direction != direction:
+            continue
+        candidates.append(_from_breaker(breaker))
+    return candidates
+
+
+def _from_ifvg(inversion: InvertedFVG) -> _InversionCandidate:
+    return _InversionCandidate(
+        kind="IFVG",
+        direction=inversion.direction,
+        zone_low=inversion.zone_low,
+        zone_high=inversion.zone_high,
+        armed_time=inversion.invalidated_at,
+        timestamp=inversion.retest_at or inversion.invalidated_at,
+        confidence=inversion.confidence,
+        metadata={
+            "source_direction": inversion.source_direction,
+            "invalidated_at": inversion.invalidated_at,
+            "retest_at": inversion.retest_at,
+        },
+    )
+
+
+def _from_breaker(breaker: BreakerBlock) -> _InversionCandidate:
+    return _InversionCandidate(
+        kind="Breaker",
+        direction=breaker.direction,
+        zone_low=breaker.zone_low,
+        zone_high=breaker.zone_high,
+        armed_time=breaker.trigger_time,
+        timestamp=breaker.timestamp,
+        confidence=0.7 if breaker.retested else 0.58,
+        metadata={
+            "origin_time": breaker.origin_time,
+            "trigger_time": breaker.trigger_time,
+            "retested": breaker.retested,
+        },
+    )
 
 
 def _build_setup(
-    symbol: str,
-    timeframe: str,
+    snapshot: PrimitiveSnapshot,
     side: str,
     sweep: LiquiditySweep,
-    inversion: InvertedFVG,
-    higher_snapshot,
-) -> EntrySetup:
-    entry_low = inversion.zone_low
-    entry_high = inversion.zone_high
-    invalidation = sweep.wick_extreme
-    target_hint = _target_hint(side, entry_low, entry_high, invalidation)
+    candidate: _InversionCandidate,
+    higher_snapshot: PrimitiveSnapshot | None,
+) -> EntrySetup | None:
+    status_info = classify_zone_status(
+        snapshot,
+        zone_low=candidate.zone_low,
+        zone_high=candidate.zone_high,
+        armed_time=candidate.armed_time,
+    )
+    if status_info is None:
+        return None
+    status, status_time = status_info
+
     messy_overlap = any(
-        zone_overlap(entry_low, entry_high, block.zone_low, block.zone_high) > 0.9
+        zone_overlap(candidate.zone_low, candidate.zone_high, block.zone_low, block.zone_high) > 0.9
         for block in (higher_snapshot.breaker_blocks if higher_snapshot else [])
     )
     score = score_model_2(
         clean_sweep=sweep.clean,
-        inversion_confidence=inversion.confidence,
-        entry_low=entry_low,
-        entry_high=entry_high,
-        invalidation=invalidation,
+        inversion_confidence=candidate.confidence,
+        entry_low=candidate.zone_low,
+        entry_high=candidate.zone_high,
+        invalidation=sweep.wick_extreme,
         messy_overlap=messy_overlap,
     )
 
@@ -69,25 +132,21 @@ def _build_setup(
     return EntrySetup(
         model_name="Entry Model 2",
         direction="long" if side == "long" else "short",
-        symbol=symbol,
-        timeframe=timeframe,
-        status="triggered",
-        entry_low=entry_low,
-        entry_high=entry_high,
-        invalidation=invalidation,
-        target_hint=target_hint,
+        symbol=snapshot.symbol,
+        timeframe=snapshot.timeframe,
+        status=status,
+        entry_low=candidate.zone_low,
+        entry_high=candidate.zone_high,
+        invalidation=sweep.wick_extreme,
+        target_hint=_target_hint(side, candidate.zone_low, candidate.zone_high, sweep.wick_extreme),
         sweep_level=sweep.liquidity_level,
         structure_level=None,
         context_timeframe=None,
         score=score,
-        reason=f"{'SSL' if side == 'long' else 'BSL'} sweep, {inversion.direction} inversion confirmed",
+        reason=f"{sweep_label(side)} sweep, {candidate.kind} inversion armed",
         components=components,
-        timestamp=max(sweep.timestamp, inversion.retest_at),
-        metadata={
-            "source_direction": inversion.source_direction,
-            "invalidated_at": inversion.invalidated_at,
-            "retest_at": inversion.retest_at,
-        },
+        timestamp=max(status_time, sweep.timestamp, candidate.timestamp),
+        metadata={"candidate_kind": candidate.kind, **candidate.metadata},
     )
 
 

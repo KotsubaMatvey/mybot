@@ -75,7 +75,7 @@ def score_model_3(
     invalidation: float,
     missed_primary_penalty: float = 0.0,
 ) -> int:
-    score = 2.8 + min(0.9, htf_alignment) + min(0.8, ltf_strength) - missed_primary_penalty
+    score = 2.3 + min(0.9, htf_alignment) + min(0.7, ltf_strength) - missed_primary_penalty
     zone_width = normalized_zone_width(entry_low, entry_high)
     if zone_width <= 0.0015:
         score += 0.4

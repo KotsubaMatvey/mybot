@@ -3,6 +3,7 @@ from __future__ import annotations
 from market_primitives.common import FairValueGap, StructureBreak
 
 from .scoring import score_model_3
+from .setup_utils import classify_zone_status, primitive_direction
 from .types import EntrySetup, PrimitiveSnapshot, StrategyContext, default_components
 
 
@@ -22,20 +23,38 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
     if htf is None or ltf is None:
         return []
 
-    direction = "bullish" if side == "long" else "bearish"
-    htf_structure = next((item for item in sorted(htf.structure_breaks, key=lambda x: x.timestamp, reverse=True) if item.direction == direction), None)
+    direction = primitive_direction(side)  # type: ignore[arg-type]
+    htf_structure = next(
+        (item for item in sorted(htf.structure_breaks, key=lambda item: item.timestamp, reverse=True) if item.direction == direction),
+        None,
+    )
     if htf_structure is None:
         return []
 
-    ltf_structure = next((item for item in sorted(ltf.structure_breaks, key=lambda x: x.timestamp, reverse=True) if item.direction == direction), None)
-    ltf_fvg = next((item for item in sorted(ltf.fvgs, key=lambda x: x.created_at, reverse=True) if item.direction == direction and item.mitigated and not item.invalidated), None)
-    if ltf_structure is None or ltf_fvg is None:
+    ltf_structure = next(
+        (
+            item
+            for item in sorted(ltf.structure_breaks, key=lambda item: item.timestamp, reverse=True)
+            if item.direction == direction and item.timestamp > htf_structure.timestamp and item.strength >= 0.2
+        ),
+        None,
+    )
+    if ltf_structure is None:
         return []
 
-    if ltf_structure.timestamp < htf_structure.timestamp:
+    continuation_fvg = next(
+        (
+            item
+            for item in sorted(ltf.fvgs, key=lambda item: item.created_at, reverse=True)
+            if item.direction == direction and item.created_at > ltf_structure.timestamp and not item.invalidated
+        ),
+        None,
+    )
+    if continuation_fvg is None:
         return []
 
-    return [_build_setup(context.primary, htf, ltf, side, htf_structure, ltf_structure, ltf_fvg)]
+    setup = _build_setup(context.primary, htf, ltf, side, htf_structure, ltf_structure, continuation_fvg)
+    return [setup] if setup is not None else []
 
 
 def _build_setup(
@@ -46,20 +65,36 @@ def _build_setup(
     htf_structure: StructureBreak,
     ltf_structure: StructureBreak,
     ltf_fvg: FairValueGap,
-) -> EntrySetup:
-    entry_low = ltf_fvg.gap_low
-    entry_high = ltf_fvg.gap_high
-    invalidation = min(c["low"] for c in ltf.candles[-5:]) if side == "long" else max(c["high"] for c in ltf.candles[-5:])
-    htf_alignment = 0.8 if htf_structure.break_type in ("BOS", "CHOCH") else 0.4
-    ltf_strength = min(1.0, ltf_structure.strength + (0.2 if ltf_fvg.mitigated else 0.0))
-    score = score_model_3(
-        htf_alignment=htf_alignment,
-        ltf_strength=ltf_strength,
-        entry_low=entry_low,
-        entry_high=entry_high,
-        invalidation=invalidation,
-        missed_primary_penalty=0.15,
+) -> EntrySetup | None:
+    status_info = classify_zone_status(
+        ltf,
+        zone_low=ltf_fvg.gap_low,
+        zone_high=ltf_fvg.gap_high,
+        armed_time=max(ltf_structure.timestamp, ltf_fvg.created_at),
     )
+    if status_info is None:
+        return None
+    status, status_time = status_info
+
+    closed_ltf = ltf.candles[:-1] if len(ltf.candles) > 1 else ltf.candles
+    recent_slice = closed_ltf[-5:] if len(closed_ltf) >= 5 else closed_ltf
+    if not recent_slice:
+        return None
+    invalidation = (
+        min(candle["low"] for candle in recent_slice)
+        if side == "long"
+        else max(candle["high"] for candle in recent_slice)
+    )
+
+    score = score_model_3(
+        htf_alignment=0.8 if htf_structure.break_type in {"BOS", "CHOCH"} else 0.5,
+        ltf_strength=min(1.0, ltf_structure.strength + 0.15),
+        entry_low=ltf_fvg.gap_low,
+        entry_high=ltf_fvg.gap_high,
+        invalidation=invalidation,
+        missed_primary_penalty=0.3,
+    )
+
     components = default_components()
     components["structure_shift_detected"] = True
     components["fvg_detected"] = True
@@ -69,23 +104,21 @@ def _build_setup(
         model_name="Entry Model 3",
         direction="long" if side == "long" else "short",
         symbol=primary.symbol,
-        timeframe=primary.timeframe,
-        status="triggered",
-        entry_low=entry_low,
-        entry_high=entry_high,
+        timeframe=ltf.timeframe,
+        status=status,
+        entry_low=ltf_fvg.gap_low,
+        entry_high=ltf_fvg.gap_high,
         invalidation=invalidation,
-        target_hint=_target_hint(side, entry_low, entry_high, invalidation),
+        target_hint=_target_hint(side, ltf_fvg.gap_low, ltf_fvg.gap_high, invalidation),
         sweep_level=None,
         structure_level=ltf_structure.broken_level,
         context_timeframe=htf.timeframe,
         score=score,
-        reason=(
-            f"HTF {htf_structure.direction} context, "
-            f"LTF {ltf_structure.direction} reclaim after FVG mitigation"
-        ),
+        reason=f"HTF {htf_structure.direction} context, continuation FVG pullback",
         components=components,
-        timestamp=max(htf_structure.timestamp, ltf_structure.timestamp, ltf_fvg.mitigated_at or ltf_fvg.created_at),
+        timestamp=max(status_time, htf_structure.timestamp, ltf_structure.timestamp, ltf_fvg.created_at),
         metadata={
+            "primary_timeframe": primary.timeframe,
             "htf_timeframe": htf.timeframe,
             "ltf_timeframe": ltf.timeframe,
             "htf_structure_type": htf_structure.break_type,

@@ -86,7 +86,7 @@ class InvertedFVG:
     zone_low: float
     zone_high: float
     invalidated_at: int
-    retest_at: int
+    retest_at: int | None
     confidence: float
     metadata: dict[str, Any] = field(default_factory=dict)
 

@@ -88,8 +88,8 @@ def detect_sweeps(candles: list[Candle], symbol: str, timeframe: str) -> list[Li
     swing_highs, swing_lows = collect_swings(lookback, symbol, timeframe)
     results: list[LiquiditySweep] = []
 
-    if swing_highs:
-        swing = swing_highs[-1]
+    swing = _latest_swept_swing(swing_highs, sweep_candle, side="high")
+    if swing is not None:
         if sweep_candle["high"] > swing.level and sweep_candle["close"] < swing.level:
             clean = (sweep_candle["high"] - swing.level) > abs(sweep_candle["close"] - swing.level)
             results.append(
@@ -105,8 +105,8 @@ def detect_sweeps(candles: list[Candle], symbol: str, timeframe: str) -> list[Li
                 )
             )
 
-    if swing_lows:
-        swing = swing_lows[-1]
+    swing = _latest_swept_swing(swing_lows, sweep_candle, side="low")
+    if swing is not None:
         if sweep_candle["low"] < swing.level and sweep_candle["close"] > swing.level:
             clean = (sweep_candle["close"] - swing.level) > abs(sweep_candle["low"] - swing.level)
             results.append(
@@ -142,8 +142,8 @@ def detect_liquidity_raids(candles: list[Candle], symbol: str, timeframe: str) -
     displacement = candle_range >= avg_range * 1.1
 
     results: list[LiquiditySweep] = []
-    if swing_highs:
-        swing = swing_highs[-1]
+    swing = _latest_swept_swing(swing_highs, sweep_candle, side="high")
+    if swing is not None:
         if sweep_candle["high"] > swing.level and sweep_candle["close"] < swing.level and (displacement or vol_ratio >= 1.4):
             results.append(
                 _build_sweep(
@@ -160,8 +160,8 @@ def detect_liquidity_raids(candles: list[Candle], symbol: str, timeframe: str) -
             results[-1].metadata["volume_ratio"] = vol_ratio
             results[-1].metadata["raid"] = True
 
-    if swing_lows:
-        swing = swing_lows[-1]
+    swing = _latest_swept_swing(swing_lows, sweep_candle, side="low")
+    if swing is not None:
         if sweep_candle["low"] < swing.level and sweep_candle["close"] > swing.level and (displacement or vol_ratio >= 1.4):
             results.append(
                 _build_sweep(
@@ -179,6 +179,15 @@ def detect_liquidity_raids(candles: list[Candle], symbol: str, timeframe: str) -
             results[-1].metadata["raid"] = True
 
     return results
+
+
+def _latest_swept_swing(swings: list[SwingPoint], candle: Candle, side: str) -> SwingPoint | None:
+    for swing in reversed(swings[-4:]):
+        if side == "high" and candle["high"] > swing.level and candle["close"] < swing.level:
+            return swing
+        if side == "low" and candle["low"] < swing.level and candle["close"] > swing.level:
+            return swing
+    return None
 
 
 __all__ = [

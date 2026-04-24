@@ -16,7 +16,7 @@ def detect_structure_breaks(candles: list[Candle], symbol: str, timeframe: str) 
     last = closed[-1]
     results: list[StructureBreak] = []
 
-    last_high = swing_highs[-1]
+    last_high = next((item for item in reversed(swing_highs) if last["close"] > item.level), swing_highs[-1])
     if last["close"] > last_high.level:
         results.append(
             StructureBreak(
@@ -33,7 +33,7 @@ def detect_structure_breaks(candles: list[Candle], symbol: str, timeframe: str) 
             )
         )
 
-    last_low = swing_lows[-1]
+    last_low = next((item for item in reversed(swing_lows) if last["close"] < item.level), swing_lows[-1])
     if last["close"] < last_low.level:
         results.append(
             StructureBreak(
@@ -54,7 +54,10 @@ def detect_structure_breaks(candles: list[Candle], symbol: str, timeframe: str) 
         uptrend = swing_highs[-1].level > swing_highs[-2].level
         downtrend = swing_lows[-1].level < swing_lows[-2].level
 
-        if uptrend and last["close"] < last_low.level:
+        choch_low = next((item for item in reversed(swing_lows) if last["close"] < item.level), last_low)
+        choch_high = next((item for item in reversed(swing_highs) if last["close"] > item.level), last_high)
+
+        if uptrend and last["close"] < choch_low.level:
             results.append(
                 StructureBreak(
                     symbol=symbol,
@@ -62,18 +65,18 @@ def detect_structure_breaks(candles: list[Candle], symbol: str, timeframe: str) 
                     break_type="CHOCH",
                     direction="bearish",
                     timestamp=last["time"],
-                    broken_level=last_low.level,
+                    broken_level=choch_low.level,
                     close_price=last["close"],
-                    source_swing_index=last_low.index,
-                    strength=_break_strength(last, last_low.level),
+                    source_swing_index=choch_low.index,
+                    strength=_break_strength(last, choch_low.level),
                     metadata={
                         "trend": "uptrend",
                         "previous_high": swing_highs[-2].level,
-                        "swing_time": last_low.timestamp,
+                        "swing_time": choch_low.timestamp,
                     },
                 )
             )
-        if downtrend and last["close"] > last_high.level:
+        if downtrend and last["close"] > choch_high.level:
             results.append(
                 StructureBreak(
                     symbol=symbol,
@@ -81,14 +84,14 @@ def detect_structure_breaks(candles: list[Candle], symbol: str, timeframe: str) 
                     break_type="CHOCH",
                     direction="bullish",
                     timestamp=last["time"],
-                    broken_level=last_high.level,
+                    broken_level=choch_high.level,
                     close_price=last["close"],
-                    source_swing_index=last_high.index,
-                    strength=_break_strength(last, last_high.level),
+                    source_swing_index=choch_high.index,
+                    strength=_break_strength(last, choch_high.level),
                     metadata={
                         "trend": "downtrend",
                         "previous_low": swing_lows[-2].level,
-                        "swing_time": last_high.timestamp,
+                        "swing_time": choch_high.timestamp,
                     },
                 )
             )

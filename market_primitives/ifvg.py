@@ -25,8 +25,6 @@ def detect_ifvg(candles: list[Candle], symbol: str, timeframe: str) -> list[Inve
             if in_zone(candle, gap.gap_low, gap.gap_high):
                 retest_at = candle["time"]
                 break
-        if retest_at is None:
-            continue
 
         direction = "bullish" if gap.direction == "bearish" else "bearish"
         confidence = 0.55 + min(0.35, (gap.fill_ratio or 0.0) * 0.45)
@@ -35,14 +33,14 @@ def detect_ifvg(candles: list[Candle], symbol: str, timeframe: str) -> list[Inve
                 symbol=symbol,
                 timeframe=timeframe,
                 direction=direction,  # type: ignore[arg-type]
-                timestamp=retest_at,
+                timestamp=retest_at or gap.invalidated_at,
                 source_direction=gap.direction,
                 zone_low=gap.gap_low,
                 zone_high=gap.gap_high,
                 invalidated_at=gap.invalidated_at,
                 retest_at=retest_at,
                 confidence=min(confidence, 0.95),
-                metadata={"created_at": gap.created_at},
+                metadata={"created_at": gap.created_at, "fill_ratio": gap.fill_ratio},
             )
         )
 

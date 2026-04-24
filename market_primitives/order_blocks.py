@@ -74,8 +74,11 @@ def detect_breaker_blocks(candles: list[Candle], symbol: str, timeframe: str) ->
     if len(candles) < 25:
         return []
 
-    current = candles[-1]
-    lookback = candles[-50:-1]
+    closed = candles[:-1]
+    if not closed:
+        return []
+    current = closed[-1]
+    lookback = closed[-50:]
     highs, lows = collect_swings(lookback, symbol, timeframe, left=1, right=1)
     results: list[BreakerBlock] = []
     n = len(lookback)
