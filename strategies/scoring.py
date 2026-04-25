@@ -20,11 +20,18 @@ def score_model_1(
     htf_modifier: float = 0.0,
     messy_overlap: bool = False,
     late_mitigation: bool = False,
+    displacement_factor: float = 0.0,
+    has_displacement: bool = False,
 ) -> int:
-    score = 2.6
+    score = 2.1
     if clean_sweep:
         score += 0.5
-    score += min(0.6, structure_strength * 0.7)
+    score += min(0.5, structure_strength * 0.55)
+    score += min(0.45, displacement_factor * 0.45)
+    if has_displacement:
+        score += 0.25
+    else:
+        score -= 0.35
     zone_width = normalized_zone_width(entry_low, entry_high)
     if zone_width <= 0.002:
         score += 0.4
@@ -51,11 +58,18 @@ def score_model_2(
     invalidation: float,
     htf_modifier: float = 0.0,
     messy_overlap: bool = False,
+    breach_displacement_factor: float = 0.0,
+    has_displacement: bool = False,
 ) -> int:
-    score = 2.8
+    score = 2.0
     if clean_sweep:
         score += 0.5
-    score += min(0.8, inversion_confidence)
+    score += min(0.65, inversion_confidence * 0.8)
+    score += min(0.5, breach_displacement_factor * 0.5)
+    if has_displacement:
+        score += 0.25
+    else:
+        score -= 0.5
     zone_width = normalized_zone_width(entry_low, entry_high)
     if zone_width <= 0.002:
         score += 0.3
@@ -78,8 +92,15 @@ def score_model_3(
     invalidation: float,
     missed_primary_penalty: float = 0.0,
     htf_modifier: float = 0.0,
+    fill_quality: float = 0.0,
+    has_displacement: bool = False,
 ) -> int:
-    score = 2.3 + min(0.9, htf_alignment) + min(0.7, ltf_strength) - missed_primary_penalty
+    score = 1.9 + min(0.75, htf_alignment) + min(0.55, ltf_strength) - missed_primary_penalty
+    score += min(0.45, fill_quality * 0.45)
+    if has_displacement:
+        score += 0.2
+    else:
+        score -= 0.35
     zone_width = normalized_zone_width(entry_low, entry_high)
     if zone_width <= 0.0015:
         score += 0.4

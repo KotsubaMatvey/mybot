@@ -84,6 +84,8 @@ class StrategyContext:
     htf_timeframe: str | None = None
     execution_timeframe: str | None = None
     htf_mode: str = "strict"
+    require_displacement: bool = True
+    model3_fill_threshold: float = 0.5
 
 
 def default_components() -> SetupComponents:

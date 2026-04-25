@@ -33,7 +33,8 @@ def build_strategy_alert_text(alert: AlertPayload) -> str:
     if htf_bias and htf_bias != "none":
         htf_location = alert.metadata.get("htf_location", "unknown")
         htf_zone = alert.metadata.get("htf_zone_type", "None")
-        lines.append(f"HTF: {alert.context_timeframe or '-'} {htf_bias} {htf_location} {htf_zone}")
+        htf_objective = alert.metadata.get("htf_objective_type", "none")
+        lines.append(f"HTF: {alert.context_timeframe or '-'} {htf_bias} {htf_location} {htf_zone} objective {htf_objective}")
     if alert.status:
         lines.append(f"Status: {alert.status.upper()}")
     if alert.reason:

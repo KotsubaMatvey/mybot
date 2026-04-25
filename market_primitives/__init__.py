@@ -2,6 +2,7 @@ from .common import (
     BreakerBlock,
     Candle,
     EqualLiquidityLevel,
+    FVGStatus,
     FairValueGap,
     InvertedFVG,
     KeyLevel,
@@ -17,6 +18,7 @@ from .common import (
     fmt_price,
     ts_utc,
 )
+from .displacement import DisplacementQuality, evaluate_displacement
 from .fvg import active_fvgs, detect_fvg
 from .ifvg import detect_ifvg
 from .levels import detect_eqh, detect_eql, detect_key_levels
@@ -30,7 +32,9 @@ from .volume import detect_volume, detect_volume_profile
 __all__ = [
     "BreakerBlock",
     "Candle",
+    "DisplacementQuality",
     "EqualLiquidityLevel",
+    "FVGStatus",
     "FairValueGap",
     "InvertedFVG",
     "KeyLevel",
@@ -63,6 +67,7 @@ __all__ = [
     "detect_smt",
     "detect_volume",
     "detect_volume_profile",
+    "evaluate_displacement",
     "fmt_price",
     "ts_utc",
 ]

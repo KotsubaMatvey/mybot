@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from market_primitives.common import BreakerBlock, InvertedFVG, LiquiditySweep, zone_overlap
 
-from config import MAX_INVERSION_AGE_BARS, REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
+from config import MAX_INVERSION_AGE_BARS, MIN_RISK_BPS, REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
 from .htf_context import htf_allows_side, htf_metadata, htf_score_modifier
 from .scoring import score_model_2
 from .setup_utils import classify_zone_status, is_recent_enough, primitive_direction, sweep_label
@@ -70,10 +70,6 @@ def _build_candidates(snapshot: PrimitiveSnapshot, direction: str) -> list[_Inve
         if inversion.direction != direction:
             continue
         candidates.append(_from_ifvg(inversion))
-    for breaker in snapshot.breaker_blocks:
-        if breaker.direction != direction:
-            continue
-        candidates.append(_from_breaker(breaker))
     return candidates
 
 
@@ -88,8 +84,14 @@ def _from_ifvg(inversion: InvertedFVG) -> _InversionCandidate:
         confidence=inversion.confidence,
         metadata={
             "source_direction": inversion.source_direction,
+            "source_fvg_direction": inversion.source_direction,
+            "source_fvg_time": inversion.source_fvg_time,
             "invalidated_at": inversion.invalidated_at,
+            "breach_time": inversion.invalidated_at,
             "retest_at": inversion.retest_at,
+            "breach_displacement_factor": inversion.breach_displacement_factor,
+            "has_displacement": inversion.breach_displacement_factor > 0,
+            "ifvg_mean_threshold": inversion.mean_threshold,
         },
     )
 
@@ -129,6 +131,16 @@ def _build_setup(
     if status_info is None:
         return None
     status, status_time = status_info
+    if status != "watching" and status_time <= candidate.armed_time:
+        return None
+    if context.require_displacement and candidate.metadata.get("has_displacement") is False:
+        return None
+
+    entry_mid = (candidate.zone_low + candidate.zone_high) / 2
+    risk = abs(entry_mid - sweep.wick_extreme)
+    risk_floor = entry_mid * (MIN_RISK_BPS / 10_000)
+    if risk <= 0 or risk < risk_floor:
+        return None
 
     messy_overlap = any(
         zone_overlap(candidate.zone_low, candidate.zone_high, block.zone_low, block.zone_high) > 0.9
@@ -142,6 +154,8 @@ def _build_setup(
         invalidation=sweep.wick_extreme,
         htf_modifier=htf_score_modifier(context.htf_context, side, htf_mode),
         messy_overlap=messy_overlap,
+        breach_displacement_factor=float(candidate.metadata.get("breach_displacement_factor") or 0.0),
+        has_displacement=bool(candidate.metadata.get("has_displacement")),
     )
 
     components = default_components()
@@ -165,7 +179,13 @@ def _build_setup(
         reason=_reason(context, side, candidate),
         components=components,
         timestamp=max(status_time, sweep.timestamp, candidate.timestamp),
-        metadata={"candidate_kind": candidate.kind, **candidate.metadata, **htf_metadata(context.htf_context)},
+        metadata={
+            "candidate_kind": candidate.kind,
+            "sweep_time": sweep.timestamp,
+            "swing_significance": sweep.source_swing_significance,
+            **candidate.metadata,
+            **htf_metadata(context.htf_context),
+        },
     )
 
 

@@ -6,7 +6,9 @@ from typing import Any, Literal, TypedDict
 
 Direction = Literal["bullish", "bearish"]
 SwingDirection = Literal["high", "low"]
-StructureType = Literal["BOS", "CHOCH"]
+SwingSignificance = Literal["short", "intermediate", "long"]
+StructureType = Literal["BOS", "CHOCH", "MSS"]
+FVGStatus = Literal["open", "partially_filled", "filled", "inverted", "invalidated"]
 PDKind = Literal["premium", "discount", "ote_premium", "ote_discount"]
 VolumeSignalType = Literal["spike", "profile"]
 
@@ -29,6 +31,8 @@ class SwingPoint:
     index: int
     level: float
     range_size: float
+    significance: SwingSignificance = "short"
+    strength: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -43,6 +47,8 @@ class LiquiditySweep:
     close_back_inside: float
     source_swing_index: int
     clean: bool
+    wick_length: float = 0.0
+    source_swing_significance: SwingSignificance | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -57,6 +63,11 @@ class StructureBreak:
     close_price: float
     source_swing_index: int
     strength: float
+    displacement_factor: float = 0.0
+    has_displacement: bool = False
+    body_ratio: float = 0.0
+    range_expansion: float = 0.0
+    created_fvg_after_break: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,6 +84,9 @@ class FairValueGap:
     mitigated_at: int | None
     invalidated_at: int | None
     fill_ratio: float
+    status: FVGStatus = "open"
+    fill_percent: float = 0.0
+    consequent_encroachment: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -88,6 +102,10 @@ class InvertedFVG:
     invalidated_at: int
     retest_at: int | None
     confidence: float
+    source_fvg_time: int | None = None
+    invalidated: bool = False
+    breach_displacement_factor: float = 0.0
+    mean_threshold: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -103,6 +121,14 @@ class OrderBlock:
     midpoint: float
     mitigated: bool
     invalidated: bool
+    open: float | None = None
+    close: float | None = None
+    high: float | None = None
+    low: float | None = None
+    mean_threshold: float | None = None
+    validated: bool = False
+    validation_time: int | None = None
+    invalidation_time: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -117,6 +143,10 @@ class BreakerBlock:
     zone_low: float
     zone_high: float
     retested: bool
+    source_order_block_time: int | None = None
+    source_order_block_direction: Direction | None = None
+    sweep_time: int | None = None
+    failed_ob_confirmed: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -243,6 +273,7 @@ def collect_swings(
         return [], []
 
     min_range = range_threshold(candles, min_range_fraction)
+    avg_range = average_range(candles)
     highs: list[SwingPoint] = []
     lows: list[SwingPoint] = []
 
@@ -256,6 +287,12 @@ def collect_swings(
         neighbors = left_slice + right_slice
 
         if all(mid["high"] > candle["high"] for candle in neighbors):
+            significance, strength = _swing_significance(
+                candles,
+                index,
+                range_size=candle_range(mid),
+                avg_range=avg_range,
+            )
             highs.append(
                 SwingPoint(
                     symbol=symbol,
@@ -265,9 +302,18 @@ def collect_swings(
                     index=index,
                     level=mid["high"],
                     range_size=candle_range(mid),
+                    significance=significance,
+                    strength=strength,
+                    metadata={"age_bars": len(candles) - index - 1},
                 )
             )
         if all(mid["low"] < candle["low"] for candle in neighbors):
+            significance, strength = _swing_significance(
+                candles,
+                index,
+                range_size=candle_range(mid),
+                avg_range=avg_range,
+            )
             lows.append(
                 SwingPoint(
                     symbol=symbol,
@@ -277,9 +323,35 @@ def collect_swings(
                     index=index,
                     level=mid["low"],
                     range_size=candle_range(mid),
+                    significance=significance,
+                    strength=strength,
+                    metadata={"age_bars": len(candles) - index - 1},
                 )
             )
     return highs, lows
+
+
+def _swing_significance(
+    candles: list[Candle],
+    index: int,
+    *,
+    range_size: float,
+    avg_range: float,
+) -> tuple[SwingSignificance, float]:
+    try:
+        from config import SWING_INTERMEDIATE_RANGE_MULT, SWING_LONG_MIN_AGE_BARS
+    except ImportError:
+        SWING_INTERMEDIATE_RANGE_MULT = 1.1
+        SWING_LONG_MIN_AGE_BARS = 20
+
+    age_bars = max(0, len(candles) - index - 1)
+    range_mult = range_size / max(avg_range, 1e-9)
+    strength = min(1.0, (range_mult / 2.0) + min(age_bars / max(SWING_LONG_MIN_AGE_BARS, 1), 1.0) * 0.35)
+    if age_bars >= SWING_LONG_MIN_AGE_BARS or strength >= 0.85:
+        return "long", strength
+    if range_mult >= SWING_INTERMEDIATE_RANGE_MULT or age_bars >= max(5, SWING_LONG_MIN_AGE_BARS // 2):
+        return "intermediate", strength
+    return "short", strength
 
 
 def cluster_levels(levels: list[float], tolerance: float = 0.0025) -> list[list[float]]:
@@ -309,6 +381,7 @@ __all__ = [
     "Direction",
     "EqualLiquidityLevel",
     "FairValueGap",
+    "FVGStatus",
     "InvertedFVG",
     "KeyLevel",
     "LiquiditySweep",
@@ -318,6 +391,7 @@ __all__ = [
     "SMTDivergence",
     "StructureBreak",
     "StructureType",
+    "SwingSignificance",
     "SwingDirection",
     "SwingPoint",
     "VolumeSignal",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from market_primitives.common import FairValueGap, LiquiditySweep, StructureBreak, zone_overlap
 
-from config import REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
+from config import MIN_RISK_BPS, REQUIRE_HTF_CONTEXT_FOR_ENTRY_MODELS
 from .htf_context import htf_allows_side, htf_metadata, htf_score_modifier
 from .scoring import score_model_1
 from .setup_utils import classify_zone_status, primitive_direction, sweep_label
@@ -48,6 +48,8 @@ def _detect_direction(context: StrategyContext, side: str) -> list[EntrySetup]:
         )
         if structure is None:
             continue
+        if context.require_displacement and not (structure.has_displacement or structure.created_fvg_after_break):
+            continue
 
         post_bos_fvg = next(
             (
@@ -83,6 +85,14 @@ def _build_setup(
     if status_info is None:
         return None
     status, status_time = status_info
+    if status != "watching" and status_time <= fvg.created_at:
+        return None
+
+    entry_mid = (entry_low + entry_high) / 2
+    risk = abs(entry_mid - sweep.wick_extreme)
+    risk_floor = entry_mid * (MIN_RISK_BPS / 10_000)
+    if risk <= 0 or risk < risk_floor:
+        return None
 
     htf_alignment = 0.0
     if higher_snapshot is not None:
@@ -102,6 +112,8 @@ def _build_setup(
         htf_modifier=htf_score_modifier(context.htf_context, side, htf_mode),
         messy_overlap=messy_overlap,
         late_mitigation=late_mitigation,
+        displacement_factor=structure.displacement_factor,
+        has_displacement=structure.has_displacement,
     )
 
     components = default_components()
@@ -127,9 +139,19 @@ def _build_setup(
         components=components,
         timestamp=max(status_time, sweep.timestamp, structure.timestamp, fvg.created_at),
         metadata={
+            "sweep_time": sweep.timestamp,
             "sweep_timestamp": sweep.timestamp,
+            "swing_significance": sweep.source_swing_significance,
+            "structure_time": structure.timestamp,
             "structure_type": structure.break_type,
+            "displacement_factor": round(structure.displacement_factor, 6),
+            "has_displacement": structure.has_displacement,
+            "body_ratio": round(structure.body_ratio, 6),
+            "range_expansion": round(structure.range_expansion, 6),
             "fvg_created_at": fvg.created_at,
+            "fvg_time": fvg.created_at,
+            "fvg_status": fvg.status,
+            "fvg_fill_percent": fvg.fill_percent,
             "fvg_mitigated_at": fvg.mitigated_at,
             **htf_metadata(context.htf_context),
         },

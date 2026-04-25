@@ -63,6 +63,21 @@ def build_all_summaries(results: list[BacktestResult]) -> dict[str, list[Summary
             lambda row: (row.event.model_name, _htf_alignment(row)),
             ("model", "htf_alignment"),
         ),
+        "summary_by_displacement": summarize(
+            results,
+            lambda row: (row.event.model_name, _displacement_bucket(row)),
+            ("model", "displacement"),
+        ),
+        "summary_by_model3_fill_threshold": summarize(
+            results,
+            lambda row: (row.event.model_name, row.event.fill_mode or "none"),
+            ("model", "fill_mode"),
+        ),
+        "summary_by_fvg_status": summarize(
+            results,
+            lambda row: (row.event.model_name, row.event.fvg_status or "unknown"),
+            ("model", "fvg_status"),
+        ),
     }
 
 
@@ -149,6 +164,14 @@ def _htf_alignment(result: BacktestResult) -> str:
     ):
         return "aligned"
     return "opposed"
+
+
+def _displacement_bucket(result: BacktestResult) -> str:
+    if result.event.has_displacement is True:
+        return "has_displacement"
+    if result.event.has_displacement is False:
+        return "weak_or_none"
+    return "unknown"
 
 
 __all__ = ["SummaryRow", "build_all_summaries", "score_bucket", "summarize"]

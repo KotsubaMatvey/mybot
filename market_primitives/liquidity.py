@@ -61,6 +61,7 @@ def _build_sweep(
     close_back_inside: float,
     clean: bool,
 ) -> LiquiditySweep:
+    wick_length = abs(wick_extreme - swing.level)
     return LiquiditySweep(
         symbol=symbol,
         timeframe=timeframe,
@@ -71,8 +72,12 @@ def _build_sweep(
         close_back_inside=close_back_inside,
         source_swing_index=swing.index,
         clean=clean,
+        wick_length=wick_length,
+        source_swing_significance=swing.significance,
         metadata={
             "swing_time": swing.timestamp,
+            "source_swing_significance": swing.significance,
+            "wick_length": wick_length,
             "range_size": candle["high"] - candle["low"],
             "volume": candle["volume"],
         },

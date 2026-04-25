@@ -64,7 +64,7 @@ def build_htf_context(snapshot: PrimitiveSnapshot, current_price_value: float | 
     dealing_range = _build_dealing_range(snapshot, price)
     zone = _select_active_zone(snapshot, price)
     objective = _build_objective(snapshot, price)
-    inside_zone = _price_inside_zone(price, zone)
+    inside_zone = _current_candle_inside_zone(snapshot, zone) or _price_inside_zone(price, zone)
     approaching_zone = _price_approaching_zone(price, zone)
     bias_score, bias_reason = _bias_score(snapshot, price, dealing_range, zone, objective, inside_zone)
     if bias_score >= 0.6:
@@ -77,22 +77,25 @@ def build_htf_context(snapshot: PrimitiveSnapshot, current_price_value: float | 
 
     strong_bullish_zone = zone.direction == "bullish" and zone.strength >= 0.65 and (inside_zone or approaching_zone)
     strong_bearish_zone = zone.direction == "bearish" and zone.strength >= 0.65 and (inside_zone or approaching_zone)
-    allows_long = (
-        bias.direction == "bullish"
-        and ((zone.direction == "bullish" and (inside_zone or approaching_zone)) or dealing_range.location == "discount")
-    ) or (bias.direction == "neutral" and strong_bullish_zone)
-    allows_short = (
-        bias.direction == "bearish"
-        and ((zone.direction == "bearish" and (inside_zone or approaching_zone)) or dealing_range.location == "premium")
-    ) or (bias.direction == "neutral" and strong_bearish_zone)
+    long_location = dealing_range.location == "discount"
+    short_location = dealing_range.location == "premium"
+    long_poi = zone.direction == "bullish" and (inside_zone or approaching_zone)
+    short_poi = zone.direction == "bearish" and (inside_zone or approaching_zone)
+    long_objective = objective.direction == "up"
+    short_objective = objective.direction == "down"
+    allows_long = bias.direction == "bullish" and long_objective and (long_poi or long_location)
+    allows_short = bias.direction == "bearish" and short_objective and (short_poi or short_location)
+    if bias.direction == "neutral":
+        allows_long = strong_bullish_zone and long_objective
+        allows_short = strong_bearish_zone and short_objective
 
     score_modifier = 0.0
     if bias.direction == "neutral":
         score_modifier -= 0.3
     if zone.zone_type != "None" and inside_zone:
-        score_modifier += 0.25
-    elif zone.zone_type != "None" and approaching_zone:
         score_modifier += 0.1
+    elif zone.zone_type != "None" and approaching_zone:
+        score_modifier += 0.05
     else:
         score_modifier -= 0.2
 
@@ -121,7 +124,16 @@ def htf_allows_side(context: HTFContext | None, side: str, htf_mode: str) -> boo
         return True
     if context is None:
         return mode == "soft"
-    return context.allows_long if side == "long" else context.allows_short
+    if mode == "strict":
+        return context.allows_long if side == "long" else context.allows_short
+    if mode == "soft":
+        direction = "bullish" if side == "long" else "bearish"
+        if context.bias.direction == direction:
+            return True
+        if context.bias.direction == "neutral":
+            return context.zone.direction == direction and (context.inside_zone or context.approaching_zone)
+        return False
+    return False
 
 
 def htf_score_modifier(context: HTFContext | None, side: str, htf_mode: str) -> float:
@@ -133,19 +145,25 @@ def htf_score_modifier(context: HTFContext | None, side: str, htf_mode: str) -> 
     modifier = context.score_modifier
     direction = "bullish" if side == "long" else "bearish"
     if context.bias.direction == direction:
-        modifier += 0.5
+        modifier += 0.25
     elif context.bias.direction == "neutral":
         modifier -= 0.3
     else:
         modifier -= 1.0
     if context.inside_zone and context.zone.direction == direction:
-        modifier += 0.4
-    if side == "long" and context.dealing_range.location == "discount":
-        modifier += 0.3
-    if side == "short" and context.dealing_range.location == "premium":
-        modifier += 0.3
-    if _objective_aligns(context, side):
         modifier += 0.2
+    elif context.approaching_zone and context.zone.direction == direction:
+        modifier += 0.1
+    if side == "long" and context.dealing_range.location == "discount":
+        modifier += 0.15
+    if side == "short" and context.dealing_range.location == "premium":
+        modifier += 0.15
+    if _objective_aligns(context, side):
+        modifier += 0.1
+    elif context.objective.direction == "none":
+        modifier -= 0.2
+    else:
+        modifier -= 0.5
     if not context.inside_zone and not context.approaching_zone:
         modifier -= 0.4
     return modifier
@@ -182,7 +200,8 @@ def htf_metadata(context: HTFContext | None) -> dict[str, object]:
 
 
 def _build_dealing_range(snapshot: PrimitiveSnapshot, price: float | None) -> HTFDealingRange:
-    highs = sorted(snapshot.swings, key=lambda item: item.timestamp)
+    significant = [item for item in snapshot.swings if item.significance in {"intermediate", "long"}]
+    highs = sorted(significant or snapshot.swings, key=lambda item: item.timestamp)
     last_high = next((item for item in reversed(highs) if item.direction == "high"), None)
     last_low = next((item for item in reversed(highs) if item.direction == "low"), None)
     if last_high is None or last_low is None:
@@ -245,8 +264,9 @@ def _select_active_zone(snapshot: PrimitiveSnapshot, price: float | None) -> HTF
 def _build_objective(snapshot: PrimitiveSnapshot, price: float | None) -> HTFObjective:
     if price is None:
         return HTFObjective("none", None, "none", "no current price")
-    highs = [item for item in snapshot.swings if item.direction == "high" and item.level > price]
-    lows = [item for item in snapshot.swings if item.direction == "low" and item.level < price]
+    swings = [item for item in snapshot.swings if item.significance in {"intermediate", "long"}] or snapshot.swings
+    highs = [item for item in swings if item.direction == "high" and item.level > price]
+    lows = [item for item in swings if item.direction == "low" and item.level < price]
     eqh = [item for item in snapshot.equal_highs if item.level > price]
     eql = [item for item in snapshot.equal_lows if item.level < price]
     if eqh:
@@ -275,8 +295,13 @@ def _bias_score(
     score = 0.0
     reasons: list[str] = []
     recent_structures = sorted(snapshot.structure_breaks, key=lambda item: item.timestamp, reverse=True)
-    structure = next((item for item in recent_structures if item.strength >= 0.2), recent_structures[0] if recent_structures else None)
+    structure = next(
+        (item for item in recent_structures if item.has_displacement or item.strength >= 0.35),
+        recent_structures[0] if recent_structures else None,
+    )
+    structure_direction: str | None = None
     if structure is not None:
+        structure_direction = structure.direction
         if structure.direction == "bullish":
             score += 1.0
         else:
@@ -294,10 +319,10 @@ def _bias_score(
     elif inside_zone and zone.direction == "bearish":
         score -= 0.5
         reasons.append(f"inside bearish {zone.zone_type}")
-    if objective.direction == "up":
+    if objective.direction == "up" and (structure_direction == "bullish" or (inside_zone and zone.direction == "bullish")):
         score += 0.25
         reasons.append("objective above")
-    elif objective.direction == "down":
+    elif objective.direction == "down" and (structure_direction == "bearish" or (inside_zone and zone.direction == "bearish")):
         score -= 0.25
         reasons.append("objective below")
     return score, ", ".join(reasons) if reasons else "no decisive HTF inputs"
@@ -308,6 +333,14 @@ def _price_inside_zone(price: float | None, zone: HTFZone) -> bool:
         return False
     low, high = sorted((zone.low, zone.high))
     return low <= price <= high
+
+
+def _current_candle_inside_zone(snapshot: PrimitiveSnapshot, zone: HTFZone) -> bool:
+    if not snapshot.candles or zone.low is None or zone.high is None:
+        return False
+    candle = snapshot.candles[-1]
+    low, high = sorted((zone.low, zone.high))
+    return float(candle["low"]) <= high and float(candle["high"]) >= low
 
 
 def _price_approaching_zone(price: float | None, zone: HTFZone) -> bool:

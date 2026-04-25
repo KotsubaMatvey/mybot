@@ -58,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
             start_ms=_parse_time_ms(args.start, is_end=False) if args.start else None,
             end_ms=_parse_time_ms(args.end, is_end=True) if args.end else None,
             htf_mode=args.htf_mode,
+            require_displacement=_parse_bool(args.require_displacement),
+            model3_fill_threshold=args.model3_fill_threshold,
         )
         all_results.extend(results)
         all_warnings.extend(replay_warnings)
@@ -78,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
             "start": args.start,
             "end": args.end,
             "htf_mode": args.htf_mode,
+            "require_displacement": _parse_bool(args.require_displacement),
+            "model3_fill_threshold": args.model3_fill_threshold,
             "execution_pairs": EXECUTION_HTF_MAP,
             "model_3_htf_map": MODEL_3_HTF_MAP,
             "model_3_ltf_map": MODEL_3_LTF_MAP,
@@ -102,6 +106,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", help="UTC replay start datetime/date, e.g. 2025-05-01.")
     parser.add_argument("--end", help="UTC replay end datetime/date, e.g. 2025-06-30.")
     parser.add_argument("--htf-mode", choices=["strict", "soft", "off"], default="strict", help="HTF filtering mode.")
+    parser.add_argument(
+        "--require-displacement",
+        choices=["true", "false"],
+        default="true",
+        help="Require displacement for execution structure and IFVG breach.",
+    )
+    parser.add_argument(
+        "--model3-fill-threshold",
+        type=float,
+        default=0.5,
+        choices=[0.25, 0.5, 1.0],
+        help="Model 3 source FVG fill threshold.",
+    )
     parser.add_argument("--out-dir", default="backtest_results", help="Output directory for CSV and markdown report.")
     return parser
 
@@ -206,6 +223,12 @@ def _parse_time_ms(value: str, *, is_end: bool) -> int:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return int(parsed.timestamp() * 1000)
+
+
+def _parse_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 if __name__ == "__main__":

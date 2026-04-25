@@ -25,6 +25,7 @@ def detect_order_blocks(candles: list[Candle], symbol: str, timeframe: str) -> l
                 midpoint = (zone_low + zone_high) / 2
                 in_zone = zone_low <= current["close"] <= zone_high or zone_low <= current["low"] <= zone_high
                 invalidated = current["close"] < midpoint
+                validated = lookback[bos_idx]["close"] > zone_high
                 results.append(
                     OrderBlock(
                         symbol=symbol,
@@ -37,7 +38,20 @@ def detect_order_blocks(candles: list[Candle], symbol: str, timeframe: str) -> l
                         midpoint=midpoint,
                         mitigated=in_zone,
                         invalidated=invalidated,
-                        metadata={"broken_level": swing.level},
+                        open=ob_candle["open"],
+                        close=ob_candle["close"],
+                        high=ob_candle["high"],
+                        low=ob_candle["low"],
+                        mean_threshold=midpoint,
+                        validated=validated,
+                        validation_time=lookback[bos_idx]["time"] if validated else None,
+                        invalidation_time=current["time"] if invalidated else None,
+                        metadata={
+                            "broken_level": swing.level,
+                            "mean_threshold": midpoint,
+                            "validated": validated,
+                            "invalidation_rule": "close_below_mean_threshold",
+                        },
                     )
                 )
 
@@ -52,6 +66,7 @@ def detect_order_blocks(candles: list[Candle], symbol: str, timeframe: str) -> l
                 midpoint = (zone_low + zone_high) / 2
                 in_zone = zone_low <= current["close"] <= zone_high or zone_low <= current["high"] <= zone_high
                 invalidated = current["close"] > midpoint
+                validated = lookback[bos_idx]["close"] < zone_low
                 results.append(
                     OrderBlock(
                         symbol=symbol,
@@ -64,7 +79,20 @@ def detect_order_blocks(candles: list[Candle], symbol: str, timeframe: str) -> l
                         midpoint=midpoint,
                         mitigated=in_zone,
                         invalidated=invalidated,
-                        metadata={"broken_level": swing.level},
+                        open=ob_candle["open"],
+                        close=ob_candle["close"],
+                        high=ob_candle["high"],
+                        low=ob_candle["low"],
+                        mean_threshold=midpoint,
+                        validated=validated,
+                        validation_time=lookback[bos_idx]["time"] if validated else None,
+                        invalidation_time=current["time"] if invalidated else None,
+                        metadata={
+                            "broken_level": swing.level,
+                            "mean_threshold": midpoint,
+                            "validated": validated,
+                            "invalidation_rule": "close_above_mean_threshold",
+                        },
                     )
                 )
     return results
@@ -112,7 +140,16 @@ def detect_breaker_blocks(candles: list[Candle], symbol: str, timeframe: str) ->
                 zone_low=zone_low,
                 zone_high=zone_high,
                 retested=retested,
-                metadata={"pivot_level": pivot.level},
+                source_order_block_time=candle["time"],
+                source_order_block_direction="bearish",
+                sweep_time=low2.timestamp,
+                failed_ob_confirmed=True,
+                metadata={
+                    "pivot_level": pivot.level,
+                    "source_ob_time": candle["time"],
+                    "sweep_time": low2.timestamp,
+                    "failed_ob_confirmed": True,
+                },
             )
         )
         break
@@ -146,7 +183,16 @@ def detect_breaker_blocks(candles: list[Candle], symbol: str, timeframe: str) ->
                 zone_low=zone_low,
                 zone_high=zone_high,
                 retested=retested,
-                metadata={"pivot_level": pivot.level},
+                source_order_block_time=candle["time"],
+                source_order_block_direction="bullish",
+                sweep_time=high2.timestamp,
+                failed_ob_confirmed=True,
+                metadata={
+                    "pivot_level": pivot.level,
+                    "source_ob_time": candle["time"],
+                    "sweep_time": high2.timestamp,
+                    "failed_ob_confirmed": True,
+                },
             )
         )
         break

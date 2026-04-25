@@ -42,6 +42,8 @@ class ReplayConfig:
     start_ms: int | None = None
     end_ms: int | None = None
     htf_mode: str = "strict"
+    require_displacement: bool = True
+    model3_fill_threshold: float = 0.5
 
 
 @dataclass(slots=True)
@@ -99,6 +101,8 @@ def replay_entry_models(
             current_timestamp=current_timestamp,
             snapshot_cache=snapshot_cache,
             htf_mode=config.htf_mode,
+            require_displacement=config.require_displacement,
+            model3_fill_threshold=config.model3_fill_threshold,
         )
         if context is None:
             continue
@@ -172,6 +176,8 @@ def replay_entry_models_multi_timeframe(
     start_ms: int | None = None,
     end_ms: int | None = None,
     htf_mode: str = "strict",
+    require_displacement: bool = True,
+    model3_fill_threshold: float = 0.5,
 ) -> tuple[list[BacktestResult], list[ReplayWarning]]:
     results: list[BacktestResult] = []
     warnings: list[ReplayWarning] = []
@@ -200,6 +206,8 @@ def replay_entry_models_multi_timeframe(
             current_timestamp=current_timestamp,
             snapshot_cache=snapshot_cache,
             htf_mode=htf_mode,
+            require_displacement=require_displacement,
+            model3_fill_threshold=model3_fill_threshold,
         )
         if context is None:
             continue
@@ -350,6 +358,20 @@ def _setup_to_event(
         htf_allows_short=_optional_bool(metadata.get("htf_allows_short")),
         htf_objective_type=_optional_str(metadata.get("htf_objective_type")),
         htf_objective_level=_optional_float(metadata.get("htf_objective_level")),
+        displacement_factor=_optional_float(metadata.get("displacement_factor")),
+        has_displacement=_optional_bool(metadata.get("has_displacement")),
+        swing_significance=_optional_str(metadata.get("swing_significance")),
+        fvg_status=_optional_str(metadata.get("fvg_status") or metadata.get("source_fvg_status")),
+        fvg_fill_percent=_optional_float(metadata.get("fvg_fill_percent") or metadata.get("source_fvg_fill_percent")),
+        source_fvg_direction=_optional_str(metadata.get("source_fvg_direction")),
+        breach_time=_optional_int(metadata.get("breach_time")),
+        breach_displacement_factor=_optional_float(metadata.get("breach_displacement_factor")),
+        ifvg_mean_threshold=_optional_float(metadata.get("ifvg_mean_threshold")),
+        source_zone_type=_optional_str(metadata.get("source_zone_type")),
+        source_zone_time=_optional_int(metadata.get("source_zone_time")),
+        fill_percent=_optional_float(metadata.get("fill_percent")),
+        fill_mode=_optional_str(metadata.get("fill_mode")),
+        ltf_mss_time=_optional_int(metadata.get("ltf_mss_time")),
     )
 
 

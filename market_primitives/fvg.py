@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .common import Candle, FairValueGap, in_zone
+from .common import Candle, FVGStatus, FairValueGap, in_zone
 
 
 def detect_fvg(candles: list[Candle], symbol: str, timeframe: str, scan_back: int = 50) -> list[FairValueGap]:
@@ -45,6 +45,8 @@ def _build_gap(
     mitigated_at = None
     invalidated_at = None
     fill_ratio = 0.0
+    status: FVGStatus = "open"
+    consequent_encroachment = (gap_low + gap_high) / 2
 
     for candle in candles[idx + 1 :]:
         if in_zone(candle, gap_low, gap_high):
@@ -52,15 +54,19 @@ def _build_gap(
             fill_ratio = max(fill_ratio, _gap_fill_ratio(candle, gap_low, gap_high))
             if mitigated_at is None:
                 mitigated_at = candle["time"]
+            status = "filled" if fill_ratio >= 0.999 else "partially_filled"
         if direction == "bullish" and candle["close"] < gap_low:
             invalidated = True
             invalidated_at = candle["time"]
+            status = "invalidated"
             break
         if direction == "bearish" and candle["close"] > gap_high:
             invalidated = True
             invalidated_at = candle["time"]
+            status = "invalidated"
             break
 
+    fill_percent = min(fill_ratio, 1.0)
     return FairValueGap(
         symbol=symbol,
         timeframe=timeframe,
@@ -72,8 +78,17 @@ def _build_gap(
         invalidated=invalidated,
         mitigated_at=mitigated_at,
         invalidated_at=invalidated_at,
-        fill_ratio=min(fill_ratio, 1.0),
-        metadata={"anchor_index": idx, "start_time": candles[idx - 2]["time"]},
+        fill_ratio=fill_percent,
+        status=status,
+        fill_percent=round(fill_percent * 100, 4),
+        consequent_encroachment=consequent_encroachment,
+        metadata={
+            "anchor_index": idx,
+            "start_time": candles[idx - 2]["time"],
+            "status": status,
+            "fill_percent": round(fill_percent * 100, 4),
+            "consequent_encroachment": consequent_encroachment,
+        },
     )
 
 

@@ -34,6 +34,20 @@ class BacktestEvent:
     htf_allows_short: bool | None = None
     htf_objective_type: str | None = None
     htf_objective_level: float | None = None
+    displacement_factor: float | None = None
+    has_displacement: bool | None = None
+    swing_significance: str | None = None
+    fvg_status: str | None = None
+    fvg_fill_percent: float | None = None
+    source_fvg_direction: str | None = None
+    breach_time: int | None = None
+    breach_displacement_factor: float | None = None
+    ifvg_mean_threshold: float | None = None
+    source_zone_type: str | None = None
+    source_zone_time: int | None = None
+    fill_percent: float | None = None
+    fill_mode: str | None = None
+    ltf_mss_time: int | None = None
 
 
 @dataclass(slots=True)

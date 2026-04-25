@@ -25,6 +25,8 @@ def build_strategy_context_for_replay(
     higher_timeframe: str | None = None,
     lower_timeframe: str | None = None,
     htf_mode: str = "strict",
+    require_displacement: bool = True,
+    model3_fill_threshold: float = 0.5,
 ) -> StrategyContext:
     primary = build_primitive_snapshot(symbol, timeframe, primary_visible)
 
@@ -56,6 +58,8 @@ def build_strategy_context_for_replay(
         htf_timeframe=htf,
         execution_timeframe=timeframe,
         htf_mode=htf_mode,
+        require_displacement=require_displacement,
+        model3_fill_threshold=model3_fill_threshold,
     )
 
 
@@ -68,6 +72,8 @@ def build_accumulated_strategy_context_for_replay(
     higher_timeframe: str | None = None,
     lower_timeframe: str | None = None,
     htf_mode: str = "strict",
+    require_displacement: bool = True,
+    model3_fill_threshold: float = 0.5,
 ) -> StrategyContext | None:
     primary = snapshot_cache.get_snapshot(symbol, timeframe, current_timestamp)
     if primary is None:
@@ -86,6 +92,8 @@ def build_accumulated_strategy_context_for_replay(
         htf_timeframe=htf,
         execution_timeframe=timeframe,
         htf_mode=htf_mode,
+        require_displacement=require_displacement,
+        model3_fill_threshold=model3_fill_threshold,
     )
 
 
