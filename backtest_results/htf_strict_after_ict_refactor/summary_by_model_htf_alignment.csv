@@ -1,0 +1,6 @@
+model,htf_alignment,count,valid_outcome_count,skipped_outcome_count,long_count,short_count,avg_mfe_r,median_mfe_r,avg_mae_r,median_mae_r,hit_0_5r_rate,hit_1r_rate,hit_2r_rate,invalidation_rate,hit_1r_before_invalidation_rate,hit_2r_before_invalidation_rate,avg_score,best_symbol,best_timeframe
+Entry Model 1,aligned,256,241,15,218,38,2.222217,1.285714,1.726759,0.830667,0.759336,0.576763,0.39834,0.472656,0.502075,0.344398,4.242188,ETHUSDT,30m
+Entry Model 1,neutral,68,67,1,50,18,2.332317,1.152859,3.484644,1.0,0.746269,0.58209,0.358209,0.514706,0.447761,0.268657,3.338235,ETHUSDT,1h
+Entry Model 2,aligned,276,249,27,244,32,2.672464,1.485577,2.161784,1.036067,0.799197,0.60241,0.389558,0.565217,0.481928,0.301205,4.442029,SOLUSDT,30m
+Entry Model 2,neutral,66,57,9,53,13,2.521146,1.526316,1.69562,0.583333,0.964912,0.824561,0.385965,0.454545,0.666667,0.333333,3.727273,BTCUSDT,30m
+Entry Model 3,aligned,38,34,4,34,4,8.8909,5.550841,11.385294,8.409176,0.823529,0.794118,0.647059,0.842105,0.529412,0.470588,4.263158,BTCUSDT,1h

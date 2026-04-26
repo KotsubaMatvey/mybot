@@ -1,0 +1,5 @@
+model,htf_zone_type,count,valid_outcome_count,skipped_outcome_count,long_count,short_count,avg_mfe_r,median_mfe_r,avg_mae_r,median_mae_r,hit_0_5r_rate,hit_1r_rate,hit_2r_rate,invalidation_rate,hit_1r_before_invalidation_rate,hit_2r_before_invalidation_rate,avg_score,best_symbol,best_timeframe
+Entry Model 3,Breaker,6,5,1,6,0,6.809255,6.4453,10.453161,8.618352,1.0,1.0,1.0,1.0,0.4,0.4,4.666667,BTCUSDT,30m
+Entry Model 3,FVG,10,8,2,10,0,15.262868,6.269846,7.825291,3.318868,1.0,0.875,0.875,0.7,0.75,0.75,4.1,BTCUSDT,1h
+Entry Model 3,IFVG,1,1,0,1,0,0.201602,0.201602,4.818425,4.818425,0.0,0.0,0.0,1.0,0.0,0.0,4.0,BTCUSDT,1h
+Entry Model 3,PD,4,4,0,2,2,1.786576,1.711016,3.905841,2.06844,1.0,1.0,0.25,0.75,0.5,0.25,4.5,BTCUSDT,15m

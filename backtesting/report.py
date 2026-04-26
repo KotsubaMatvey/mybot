@@ -56,7 +56,7 @@ def _write_report_md(
     config: dict[str, Any],
 ) -> None:
     generated_at = datetime.now(timezone.utc).isoformat()
-    skipped = [result for result in results if result.event.skipped_reason]
+    skipped = [result for result in results if result.event.skipped_reason or result.outcome.mfe_r is None]
     lines = [
         "# Entry Models Backtest Report",
         "",
@@ -123,7 +123,10 @@ def _write_report_md(
     if warnings:
         lines.extend(f"- {item.model_name} {item.symbol} {item.timeframe} {item.timestamp}: {item.message}" for item in warnings[:50])
     if skipped:
-        lines.extend(f"- {item.event.event_id}: {item.event.skipped_reason} ({item.event.warning or 'no warning'})" for item in skipped[:50])
+        lines.extend(
+            f"- {item.event.event_id}: {_skipped_outcome_reason(item)} ({item.event.warning or 'no warning'})"
+            for item in skipped[:50]
+        )
     if not warnings and not skipped:
         lines.append("- none")
     lines.extend(
@@ -269,6 +272,14 @@ def _markdown_table(rows: list[SummaryRow], limit: int = 12) -> str:
     if len(rows) > limit:
         lines.append(f"\n_Showing {limit} of {len(rows)} rows._")
     return "\n".join(lines)
+
+
+def _skipped_outcome_reason(result: BacktestResult) -> str:
+    if result.event.skipped_reason:
+        return result.event.skipped_reason
+    if result.outcome.mfe_r is None:
+        return "missing forward outcome"
+    return "skipped outcome"
 
 
 __all__ = ["write_reports"]

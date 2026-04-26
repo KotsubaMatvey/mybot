@@ -1,0 +1,7 @@
+model,direction,count,valid_outcome_count,skipped_outcome_count,long_count,short_count,avg_mfe_r,median_mfe_r,avg_mae_r,median_mae_r,hit_0_5r_rate,hit_1r_rate,hit_2r_rate,invalidation_rate,hit_1r_before_invalidation_rate,hit_2r_before_invalidation_rate,avg_score,best_symbol,best_timeframe
+Entry Model 1,long,937,836,101,937,0,2.572721,1.353635,1.982913,1.028142,0.796651,0.594498,0.370813,0.558164,0.497608,0.287081,3.371398,ETHUSDT,4h
+Entry Model 1,short,1018,913,105,0,1018,2.251348,1.171078,2.370375,1.144307,0.788609,0.559693,0.336254,0.587426,0.468784,0.259584,3.270138,SOLUSDT,4h
+Entry Model 2,long,633,567,66,633,0,2.408573,1.39604,2.36794,0.870386,0.811287,0.619048,0.365079,0.516588,0.511464,0.276896,3.704581,SOLUSDT,30m
+Entry Model 2,short,627,560,67,0,627,2.527356,1.232874,2.818287,1.460171,0.782143,0.571429,0.325,0.639553,0.464286,0.232143,3.645933,SOLUSDT,4h
+Entry Model 3,long,14,11,3,14,0,15.935829,6.4453,9.834246,4.206074,0.909091,0.818182,0.818182,1.0,0.454545,0.454545,3.357143,ETHUSDT,1h
+Entry Model 3,short,7,6,1,0,7,13.432472,13.43956,5.048776,3.252941,1.0,1.0,0.833333,1.0,0.166667,0.0,3.428571,SOLUSDT,1h

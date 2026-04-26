@@ -1,0 +1,7 @@
+model,fvg_status,count,valid_outcome_count,skipped_outcome_count,long_count,short_count,avg_mfe_r,median_mfe_r,avg_mae_r,median_mae_r,hit_0_5r_rate,hit_1r_rate,hit_2r_rate,invalidation_rate,hit_1r_before_invalidation_rate,hit_2r_before_invalidation_rate,avg_score,best_symbol,best_timeframe
+Entry Model 1,filled,43,42,1,37,6,1.66327,1.232151,2.120249,0.942882,0.666667,0.571429,0.404762,0.511628,0.452381,0.333333,4.0,SOLUSDT,5m
+Entry Model 1,open,193,179,14,161,32,2.520059,1.507937,2.287301,0.827345,0.804469,0.608939,0.424581,0.471503,0.547486,0.363128,4.103627,ETHUSDT,1h
+Entry Model 1,partially_filled,88,87,1,70,18,1.964043,1.032129,1.737275,0.873805,0.701149,0.517241,0.310345,0.488636,0.390805,0.252874,3.965909,ETHUSDT,30m
+Entry Model 2,unknown,342,306,36,297,45,2.644277,1.524155,2.074949,0.960209,0.830065,0.643791,0.388889,0.54386,0.51634,0.30719,4.304094,SOLUSDT,30m
+Entry Model 3,filled,23,21,2,22,1,4.139848,3.706717,10.71637,8.2,0.714286,0.666667,0.619048,0.913043,0.380952,0.380952,4.521739,ETHUSDT,30m
+Entry Model 3,partially_filled,15,13,2,12,3,16.565678,7.798956,12.465865,10.054054,1.0,1.0,0.692308,0.733333,0.769231,0.615385,3.866667,BTCUSDT,1h

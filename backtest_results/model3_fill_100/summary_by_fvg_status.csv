@@ -1,0 +1,2 @@
+model,fvg_status,count,valid_outcome_count,skipped_outcome_count,long_count,short_count,avg_mfe_r,median_mfe_r,avg_mae_r,median_mae_r,hit_0_5r_rate,hit_1r_rate,hit_2r_rate,invalidation_rate,hit_1r_before_invalidation_rate,hit_2r_before_invalidation_rate,avg_score,best_symbol,best_timeframe
+Entry Model 3,filled,14,13,1,14,0,4.918568,5.693182,9.907313,8.618352,0.923077,0.846154,0.769231,0.928571,0.461538,0.461538,4.642857,ETHUSDT,30m

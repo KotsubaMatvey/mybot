@@ -97,6 +97,7 @@ def summarize(results: list[BacktestResult], key_func: KeyFunc, key_names: tuple
 def _metrics_for(group: list[BacktestResult]) -> SummaryRow:
     count = len(group)
     valid_r = [item for item in group if item.event.skipped_reason is None and item.outcome.mfe_r is not None]
+    skipped_outcomes = [item for item in group if item not in valid_r]
     mfe_r = [item.outcome.mfe_r for item in valid_r if item.outcome.mfe_r is not None]
     mae_r = [item.outcome.mae_r for item in valid_r if item.outcome.mae_r is not None]
     scores = [item.event.score for item in group if item.event.score is not None]
@@ -104,7 +105,7 @@ def _metrics_for(group: list[BacktestResult]) -> SummaryRow:
     return {
         "count": count,
         "valid_outcome_count": len(valid_r),
-        "skipped_outcome_count": sum(1 for item in group if item.event.skipped_reason is not None),
+        "skipped_outcome_count": len(skipped_outcomes),
         "long_count": sum(1 for item in group if item.event.direction == "long"),
         "short_count": sum(1 for item in group if item.event.direction == "short"),
         "avg_mfe_r": _avg(mfe_r),
